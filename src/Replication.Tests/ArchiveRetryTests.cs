@@ -1,6 +1,6 @@
+using NUnit.Framework;
 using Replication.Client;
 using Sample.Lab;
-using Xunit;
 
 namespace Replication.Tests;
 
@@ -8,11 +8,10 @@ namespace Replication.Tests;
 public sealed class ArchiveRetryTests
 {
     /// <summary>The race with the retry pass cannot be forced, so each width runs in a lab of its own.</summary>
-    [Theory]
-    [InlineData(2)]
-    [InlineData(4)]
-    [InlineData(8)]
-    [InlineData(16)]
+    [TestCase(2)]
+    [TestCase(4)]
+    [TestCase(8)]
+    [TestCase(16)]
     public async Task User_archive_during_an_archive_retry_converges(int clicks)
     {
         var log = new SyncLog();
@@ -34,20 +33,20 @@ public sealed class ArchiveRetryTests
 
         // The leftover parent is back in the replica, so the user can select it again, from several clicks at once.
         Guid parent = Guid.Parse(Inspect.ClientRows(lab.C1, "Category").Single(r => r.Label == "Архів").Id);
-        await Task.WhenAll(Enumerable.Range(0, clicks).Select(_ => Task.Run(() => lab.C1.Agent.ArchiveAsync([("Category", parent)]), TestContext.Current.CancellationToken)));
+        await Task.WhenAll(Enumerable.Range(0, clicks).Select(_ => Task.Run(() => lab.C1.Agent.ArchiveAsync([("Category", parent)]), TestContext.CurrentContext.CancellationToken)));
         await lab.SettleAsync(TimeSpan.FromSeconds(60));
 
-        Assert.Equal(AgentState.Online, lab.C1.Agent.GetStatus().State);
-        Assert.False(lab.C1.Agent.HasPendingArchiveWork);
+        Assert.That(lab.C1.Agent.GetStatus().State, Is.EqualTo(AgentState.Online));
+        Assert.That(lab.C1.Agent.HasPendingArchiveWork, Is.False);
         foreach (string n in new[] { "Старий принтер", "Факс", "Каталог 2019" })
         {
-            Assert.False(Inspect.OwnerHas(lab.Owner, n), n);
-            Assert.True(Inspect.ClientHas(lab.C1, n, archive: true), n);
+            Assert.That(Inspect.OwnerHas(lab.Owner, n), Is.False, n);
+            Assert.That(Inspect.ClientHas(lab.C1, n, archive: true), Is.True, n);
         }
 
         foreach (ClientNode c in lab.Clients.Where(c => c.Link))
-            Assert.Empty(Inspect.Diff(lab.Owner, c));
+            Assert.That(Inspect.Diff(lab.Owner, c), Is.Empty);
         lock (c1)
-            Assert.DoesNotContain(c1, l => l.StartsWith("зв'язок обірвався", StringComparison.Ordinal));
+            Assert.That(c1, Has.None.Matches<string>(l => l.StartsWith("зв'язок обірвався", StringComparison.Ordinal)));
     }
 }

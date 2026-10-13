@@ -1,13 +1,13 @@
+using NUnit.Framework;
 using Replication.Owner;
 using Sample.Lab;
-using Xunit;
 
 namespace Replication.Tests;
 
 /// <summary>Tombstone cleanup and the activity window on the owner (design 5.2, 10.2).</summary>
 public sealed class PurgeTests
 {
-    [Fact]
+    [Test]
     public async Task Purge_takes_every_tombstone_in_batches_and_reports_the_count()
     {
         await using Lab lab = await Lab.StartAsync();
@@ -19,18 +19,18 @@ public sealed class PurgeTests
             INSERT INTO _sync_tombstones(tbl, pk, version, deleted_at) SELECT 'Item', 'gone-' || i, {head} + i, 0 FROM n;
             SELECT changes();
             """);
-        Assert.Equal(2500, added);
+        Assert.That(added, Is.EqualTo(2500));
 
         // No client is registered: the floor is open and every tombstone goes.
         OwnerStore.PurgeResult r = await lab.Owner.PurgeAsync();
 
-        Assert.Equal(before + added, r.Tombstones);
-        Assert.Equal(head + added, r.PurgedVersion);
-        Assert.Equal(OwnerStore.NoFloor, r.Floor);
-        Assert.Equal(0, OwnerSql.Scalar(lab, "SELECT COUNT(*) FROM _sync_tombstones"));
+        Assert.That(r.Tombstones, Is.EqualTo(before + added));
+        Assert.That(r.PurgedVersion, Is.EqualTo(head + added));
+        Assert.That(r.Floor, Is.EqualTo(OwnerStore.NoFloor));
+        Assert.That(OwnerSql.Scalar(lab, "SELECT COUNT(*) FROM _sync_tombstones"), Is.EqualTo(0));
     }
 
-    [Fact]
+    [Test]
     public async Task Clock_jump_forgets_a_client_whose_stream_has_ended()
     {
         await using Lab lab = await Lab.StartAsync();
@@ -44,12 +44,12 @@ public sealed class PurgeTests
         OwnerStore.PurgeResult r = await lab.Owner.PurgeAsync();
 
         List<ClientView> clients = Inspect.Clients(lab.Owner);
-        Assert.DoesNotContain(clients, x => x.ClientId == c2);
-        Assert.Equal(1, r.Clients);
-        Assert.Equal(clients.Single().Acked, r.Floor);
+        Assert.That(clients, Has.None.Matches<ClientView>(x => x.ClientId == c2));
+        Assert.That(r.Clients, Is.EqualTo(1));
+        Assert.That(r.Floor, Is.EqualTo(clients.Single().Acked));
     }
 
-    [Fact]
+    [Test]
     public async Task Age_rule_keeps_tombstones_a_connected_client_still_catches_up_on()
     {
         await using Lab lab = await Lab.StartAsync(configureOwner: o => o.CatchupBatchRows = 2);
@@ -72,6 +72,6 @@ public sealed class PurgeTests
         await lab.Owner.PurgeAsync();
 
         await lab.SettleAsync(TimeSpan.FromSeconds(60));
-        Assert.Empty(Inspect.Diff(lab.Owner, lab.C2));
+        Assert.That(Inspect.Diff(lab.Owner, lab.C2), Is.Empty);
     }
 }
