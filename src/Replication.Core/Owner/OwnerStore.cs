@@ -49,7 +49,8 @@ public sealed class OwnerStore
     // Install.
 
     /// <summary>
-    /// Creates the service tables, (re)creates the triggers (a table rebuild in SQLite drops them, 5.2),
+    /// Creates the service tables, (re)creates the triggers (a table rebuild in SQLite drops them, 5.2), remaps the
+    /// column masks when a migration changed a table's columns,
     /// stamps rows that have no version yet and checks the version file for a rolled-back database (5.3).
     /// Call after EF migrations / EnsureCreated.
     /// </summary>
@@ -101,15 +102,26 @@ public sealed class OwnerStore
                   tbl   TEXT    PRIMARY KEY,
                   floor INTEGER NOT NULL
                 ) WITHOUT ROWID;
+                CREATE TABLE IF NOT EXISTS _sync_columns (
+                  tbl     TEXT PRIMARY KEY,
+                  columns TEXT NOT NULL
+                ) WITHOUT ROWID;
                 """, tx);
             if (c.Scalar<long>("SELECT COUNT(*) FROM _sync_meta", tx) == 0)
                 c.Exec("INSERT INTO _sync_meta(instance_id, version) VALUES (@id, 0)", tx, ("@id", NewInstanceId()));
             foreach (SyncTable t in Model.Tables)
                 c.Exec("INSERT OR IGNORE INTO _sync_floor(tbl, floor) VALUES (@t, @f)", tx, ("@t", t.Name), ("@f", NoFloor));
 
+            // The masks are remapped with the triggers off: the update trigger would version every row.
             foreach (SyncTable t in Model.Tables)
             {
-                foreach (string sql in TriggerSql.For(t))
+                foreach (string sql in TriggerSql.Drop(t))
+                    c.Exec(sql, tx);
+            }
+            RemapMasks(c, tx);
+            foreach (SyncTable t in Model.Tables)
+            {
+                foreach (string sql in TriggerSql.Create(t))
                     c.Exec(sql, tx);
             }
 
@@ -120,6 +132,31 @@ public sealed class OwnerStore
         CheckVersionFile(c);
         _instanceId = c.Scalar<string>("SELECT instance_id FROM _sync_meta")!;
         WriteVersionFile(c);
+    }
+
+    /// <summary>
+    /// Bit i of <c>SyncMask</c> is the table's i-th data column (5.2), so a migration that adds, drops or renames a
+    /// column moves the bits of the masks rows already have. <c>_sync_columns</c> keeps the column list the masks were
+    /// written with; when it differs from the model, every mask is rewritten by column name, and a full mask stays full.
+    /// </summary>
+    private void RemapMasks(SqliteConnection c, SqliteTransaction tx)
+    {
+        foreach (SyncTable t in Model.Tables)
+        {
+            string columns = JsonSerializer.Serialize(t.Columns);
+            string? was = c.Scalar<string>("SELECT columns FROM _sync_columns WHERE tbl = @t", tx, ("@t", t.Name));
+            if (was == columns)
+                continue;
+            if (was is not null)
+            {
+                List<string> old = JsonSerializer.Deserialize<List<string>>(was)!;
+                long oldFull = (1L << old.Count) - 1;
+                List<string> bits = [.. old.Select((col, i) => (i, j: t.IndexOf(col))).Where(x => x.j >= 0).Select(x => $"(((SyncMask >> {x.i}) & 1) << {x.j})")];
+                string remapped = bits.Count > 0 ? string.Join(" | ", bits) : "0";
+                c.Exec($"UPDATE {Q(t.Name)} SET SyncMask = CASE WHEN SyncMask = {oldFull} THEN {t.FullMask} ELSE {remapped} END", tx);
+            }
+            c.Exec("INSERT INTO _sync_columns(tbl, columns) VALUES (@t, @c) ON CONFLICT(tbl) DO UPDATE SET columns = @c", tx, ("@t", t.Name), ("@c", columns));
+        }
     }
 
     /// <summary>
