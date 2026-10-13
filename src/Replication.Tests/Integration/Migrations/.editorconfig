@@ -1,0 +1,3 @@
+# The migrations and the model snapshot as dotnet ef writes them, so the next "migrations add" diffs cleanly.
+[{2*_*,*ModelSnapshot}.cs]
+generated_code = true
