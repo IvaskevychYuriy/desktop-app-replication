@@ -55,7 +55,7 @@ public sealed class SubscribeSessionTests
             {
                 // Catch-up and online messages, until the owner ends the stream.
             }
-        });
+        })!;
         Assert.That(e.StatusCode, Is.EqualTo(StatusCode.Unknown));
         Assert.That(e.Status.Detail, Does.Contain(nameof(ArgumentException)));
     }
