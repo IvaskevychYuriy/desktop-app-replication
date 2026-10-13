@@ -4,10 +4,10 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Storage;
+using NUnit.Framework;
 using Replication.Client;
 using Replication.Model;
 using Sample.Domain;
-using Xunit;
 
 namespace Replication.Tests;
 
@@ -24,20 +24,19 @@ public sealed class WriteRouterTests
         DeleteCategory
     }
 
-    [Theory]
-    [InlineData(FailingChange.EditItem, false)]
-    [InlineData(FailingChange.EditItem, true)]
-    [InlineData(FailingChange.DeleteItem, false)]
-    [InlineData(FailingChange.DeleteItem, true)]
-    [InlineData(FailingChange.DeleteCategory, false)]
-    [InlineData(FailingChange.DeleteCategory, true)]
+    [TestCase(FailingChange.EditItem, false)]
+    [TestCase(FailingChange.EditItem, true)]
+    [TestCase(FailingChange.DeleteItem, false)]
+    [TestCase(FailingChange.DeleteItem, true)]
+    [TestCase(FailingChange.DeleteCategory, false)]
+    [TestCase(FailingChange.DeleteCategory, true)]
     public async Task Concurrency_failure_releases_the_write_lock(FailingChange change, bool async)
     {
         await using ClientDb client = ClientDb.Create();
         (Guid categoryId, Guid itemId) = client.SeedRemote();
         await using SampleDbContext db = client.Db();
-        Category category = await db.Categories.SingleAsync(x => x.Id == categoryId, TestContext.Current.CancellationToken);
-        Item item = await db.Items.SingleAsync(x => x.Id == itemId, TestContext.Current.CancellationToken);
+        Category category = await db.Categories.SingleAsync(x => x.Id == categoryId, TestContext.CurrentContext.CancellationToken);
+        Item item = await db.Items.SingleAsync(x => x.Id == itemId, TestContext.CurrentContext.CancellationToken);
         // The agent removed the rows meanwhile (a tombstone, an Ignored reply): EF's statement finds 0 rows.
         client.Sql("DELETE FROM Category WHERE Id = @id", ("@id", Wire.PkText(categoryId)));
         switch (change)
@@ -55,7 +54,7 @@ public sealed class WriteRouterTests
 
         if (async)
         {
-            await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => db.SaveChangesAsync(TestContext.Current.CancellationToken));
+            Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => db.SaveChangesAsync(TestContext.CurrentContext.CancellationToken));
         }
         else
         {
@@ -66,94 +65,92 @@ public sealed class WriteRouterTests
         await AssertNextSaveQueuesNothingAsync(client, db);
     }
 
-    [Fact]
+    [Test]
     public async Task Cancelled_save_releases_the_write_lock()
     {
         await using ClientDb client = ClientDb.Create();
         (_, Guid itemId) = client.SeedRemote();
         using var cts = new CancellationTokenSource();
         await using SampleDbContext db = client.DbRouterFirst(new CancelOnSaving(cts));
-        Item item = await db.Items.SingleAsync(x => x.Id == itemId, TestContext.Current.CancellationToken);
+        Item item = await db.Items.SingleAsync(x => x.Id == itemId, TestContext.CurrentContext.CancellationToken);
         item.Price = 1;
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => db.SaveChangesAsync(cts.Token));
+        Assert.CatchAsync<OperationCanceledException>(() => db.SaveChangesAsync(cts.Token));
 
         AssertReleased(client, db);
         await AssertNextSaveQueuesNothingAsync(client, db);
     }
 
-    [Fact]
+    [Test]
     public async Task Save_cancelled_before_the_router_begins_its_transaction_queues_nothing()
     {
         await using ClientDb client = ClientDb.Create();
         (_, Guid itemId) = client.SeedRemote();
         await using SampleDbContext db = client.Db();
-        Item item = await db.Items.SingleAsync(x => x.Id == itemId, TestContext.Current.CancellationToken);
+        Item item = await db.Items.SingleAsync(x => x.Id == itemId, TestContext.CurrentContext.CancellationToken);
         item.Price = 1;
         using var cts = new CancellationTokenSource();
         await cts.CancelAsync();
 
         // The router's BEGIN throws inside SavingChanges; EF reports that to no interceptor.
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => db.SaveChangesAsync(cts.Token));
+        Assert.CatchAsync<OperationCanceledException>(() => db.SaveChangesAsync(cts.Token));
 
         AssertReleased(client, db);
         await AssertNextSaveQueuesNothingAsync(client, db);
     }
 
-    [Theory]
-    [InlineData(FailingChange.EditItem, false)]
-    [InlineData(FailingChange.EditItem, true)]
-    [InlineData(FailingChange.DeleteCategory, false)]
-    [InlineData(FailingChange.DeleteCategory, true)]
+    [TestCase(FailingChange.EditItem, false)]
+    [TestCase(FailingChange.EditItem, true)]
+    [TestCase(FailingChange.DeleteCategory, false)]
+    [TestCase(FailingChange.DeleteCategory, true)]
     public async Task Save_rejected_by_the_applications_interceptor_holds_no_lock(FailingChange change, bool async)
     {
         await using ClientDb client = ClientDb.Create();
         (Guid categoryId, Guid itemId) = client.SeedRemote();
         await using SampleDbContext db = client.Db(new RejectFirstSave());
         if (change == FailingChange.DeleteCategory)
-            db.Categories.Remove(await db.Categories.SingleAsync(x => x.Id == categoryId, TestContext.Current.CancellationToken));
+            db.Categories.Remove(await db.Categories.SingleAsync(x => x.Id == categoryId, TestContext.CurrentContext.CancellationToken));
         else
-            (await db.Items.SingleAsync(x => x.Id == itemId, TestContext.Current.CancellationToken)).Price = 1;
+            (await db.Items.SingleAsync(x => x.Id == itemId, TestContext.CurrentContext.CancellationToken)).Price = 1;
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => SaveAsync(db, async));
+        Assert.ThrowsAsync<InvalidOperationException>(() => SaveAsync(db, async));
 
         // The context stays open, as a form that shows the error, and the agent can still write.
         AssertReleased(client, db);
         await SaveAsync(db, async);
-        OutboxEntry entry = Assert.Single(client.Replication.Store.Entries());
-        Assert.Equal(change == FailingChange.DeleteCategory ? ("Category", Wire.PkText(categoryId), OutboxKind.Delete) : ("Item", Wire.PkText(itemId), OutboxKind.Patch),
-            (entry.Table, entry.Pk, entry.Kind));
+        List<OutboxEntry> entries = client.Replication.Store.Entries();
+        Assert.That(entries, Has.Count.EqualTo(1));
+        OutboxEntry entry = entries[0];
+        Assert.That((entry.Table, entry.Pk, entry.Kind), Is.EqualTo(change == FailingChange.DeleteCategory ? ("Category", Wire.PkText(categoryId), OutboxKind.Delete) : ("Item", Wire.PkText(itemId), OutboxKind.Patch)));
         AssertReleased(client, db);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
+    [TestCase(false)]
+    [TestCase(true)]
     public async Task Save_rejected_by_a_later_interceptor_leaves_nothing_to_the_next_save(bool async)
     {
         await using ClientDb client = ClientDb.Create();
         (_, Guid itemId) = client.SeedRemote();
         await using SampleDbContext db = client.DbRouterFirst(new RejectFirstSave());
-        Item item = await db.Items.SingleAsync(x => x.Id == itemId, TestContext.Current.CancellationToken);
+        Item item = await db.Items.SingleAsync(x => x.Id == itemId, TestContext.CurrentContext.CancellationToken);
         item.Price = 1;
 
         // An interceptor wrongly registered after the router: EF reports its failure to no interceptor, and the router's transaction outlives the save.
-        await Assert.ThrowsAsync<InvalidOperationException>(() => SaveAsync(db, async));
+        Assert.ThrowsAsync<InvalidOperationException>(() => SaveAsync(db, async));
 
         await AssertNextSaveQueuesNothingAsync(client, db);
         AssertReleased(client, db);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
+    [TestCase(false)]
+    [TestCase(true)]
     public async Task Next_save_succeeds_after_the_app_rolled_back_what_a_rejected_save_left(bool async)
     {
         await using ClientDb client = ClientDb.Create();
         (_, Guid itemId) = client.SeedRemote();
         await using SampleDbContext db = client.DbRouterFirst(new RejectFirstSave());
-        (await db.Items.SingleAsync(x => x.Id == itemId, TestContext.Current.CancellationToken)).Price = 1;
-        await Assert.ThrowsAsync<InvalidOperationException>(() => SaveAsync(db, async));
+        (await db.Items.SingleAsync(x => x.Id == itemId, TestContext.CurrentContext.CancellationToken)).Price = 1;
+        Assert.ThrowsAsync<InvalidOperationException>(() => SaveAsync(db, async));
 
         // The app releases the lock the router's transaction still holds.
         db.Database.RollbackTransaction();
@@ -162,59 +159,58 @@ public sealed class WriteRouterTests
         AssertReleased(client, db);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
+    [TestCase(false)]
+    [TestCase(true)]
     public async Task Save_retried_after_a_later_interceptor_rejected_it_commits_the_edit(bool async)
     {
         await using ClientDb client = ClientDb.Create();
         (_, Guid itemId) = client.SeedRemote();
         await using SampleDbContext db = client.DbRouterFirst(new RejectFirstSave());
-        Item item = await db.Items.SingleAsync(x => x.Id == itemId, TestContext.Current.CancellationToken);
+        Item item = await db.Items.SingleAsync(x => x.Id == itemId, TestContext.CurrentContext.CancellationToken);
         item.Price = 1;
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => SaveAsync(db, async));
+        Assert.ThrowsAsync<InvalidOperationException>(() => SaveAsync(db, async));
         await SaveAsync(db, async);
 
         await using (SampleDbContext other = client.Db())
-            Assert.Equal(1L, (await other.Items.SingleAsync(x => x.Id == itemId, TestContext.Current.CancellationToken)).Price);
-        OutboxEntry entry = Assert.Single(client.Replication.Store.Entries());
-        Assert.Equal(("Item", Wire.PkText(itemId), OutboxKind.Patch), (entry.Table, entry.Pk, entry.Kind));
+            Assert.That((await other.Items.SingleAsync(x => x.Id == itemId, TestContext.CurrentContext.CancellationToken)).Price, Is.EqualTo(1L));
+        List<OutboxEntry> entries = client.Replication.Store.Entries();
+        Assert.That(entries, Has.Count.EqualTo(1));
+        OutboxEntry entry = entries[0];
+        Assert.That((entry.Table, entry.Pk, entry.Kind), Is.EqualTo(("Item", Wire.PkText(itemId), OutboxKind.Patch)));
         AssertReleased(client, db);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
+    [TestCase(false)]
+    [TestCase(true)]
     public async Task Parent_delete_retried_after_a_later_interceptor_rejected_it_moves_the_parent_to_the_archive(bool async)
     {
         await using ClientDb client = ClientDb.Create();
         (Guid office, Guid catalog) = client.SeedArchivedCatalog();
         await using SampleDbContext db = client.DbRouterFirst(new RejectFirstSave());
-        db.Categories.Remove(await db.Categories.SingleAsync(x => x.Id == office, TestContext.Current.CancellationToken));
+        db.Categories.Remove(await db.Categories.SingleAsync(x => x.Id == office, TestContext.CurrentContext.CancellationToken));
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => SaveAsync(db, async));
+        Assert.ThrowsAsync<InvalidOperationException>(() => SaveAsync(db, async));
         await SaveAsync(db, async);
 
         AssertParentArchived(client, office, catalog);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
+    [TestCase(false)]
+    [TestCase(true)]
     public async Task Parent_delete_retried_after_a_concurrency_failure_moves_the_parent_to_the_archive(bool async)
     {
         await using ClientDb client = ClientDb.Create();
         (Guid office, Guid catalog) = client.SeedArchivedCatalog();
         (_, Guid itemId) = client.SeedRemote();
         await using SampleDbContext db = client.Db();
-        db.Categories.Remove(await db.Categories.SingleAsync(x => x.Id == office, TestContext.Current.CancellationToken));
-        Item item = await db.Items.SingleAsync(x => x.Id == itemId, TestContext.Current.CancellationToken);
+        db.Categories.Remove(await db.Categories.SingleAsync(x => x.Id == office, TestContext.CurrentContext.CancellationToken));
+        Item item = await db.Items.SingleAsync(x => x.Id == itemId, TestContext.CurrentContext.CancellationToken);
         // An edit in the same save finds its row removed by the agent meanwhile.
         client.Sql("DELETE FROM Item WHERE Id = @id", ("@id", Wire.PkText(itemId)));
         item.Price = 1;
 
-        await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => SaveAsync(db, async));
+        Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => SaveAsync(db, async));
         // The user drops the edit of the vanished row and saves again.
         db.Entry(item).State = EntityState.Detached;
         await SaveAsync(db, async);
@@ -222,7 +218,7 @@ public sealed class WriteRouterTests
         AssertParentArchived(client, office, catalog);
     }
 
-    [Fact]
+    [Test]
     public async Task Parent_delete_retried_after_a_cancelled_save_moves_the_parent_to_the_archive()
     {
         await using ClientDb client = ClientDb.Create();
@@ -230,21 +226,20 @@ public sealed class WriteRouterTests
         (_, Guid itemId) = client.SeedRemote();
         using var cts = new CancellationTokenSource();
         await using SampleDbContext db = client.DbRouterFirst(new CancelOnSaving(cts));
-        db.Categories.Remove(await db.Categories.SingleAsync(x => x.Id == office, TestContext.Current.CancellationToken));
+        db.Categories.Remove(await db.Categories.SingleAsync(x => x.Id == office, TestContext.CurrentContext.CancellationToken));
         // EF looks at the token only when it has a statement to run.
-        (await db.Items.SingleAsync(x => x.Id == itemId, TestContext.Current.CancellationToken)).Price = 1;
+        (await db.Items.SingleAsync(x => x.Id == itemId, TestContext.CurrentContext.CancellationToken)).Price = 1;
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => db.SaveChangesAsync(cts.Token));
-        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        Assert.CatchAsync<OperationCanceledException>(() => db.SaveChangesAsync(cts.Token));
+        await db.SaveChangesAsync(TestContext.CurrentContext.CancellationToken);
 
         AssertParentArchived(client, office, catalog);
     }
 
-    [Theory]
-    [InlineData(false, false)]
-    [InlineData(false, true)]
-    [InlineData(true, false)]
-    [InlineData(true, true)]
+    [TestCase(false, false)]
+    [TestCase(false, true)]
+    [TestCase(true, false)]
+    [TestCase(true, true)]
     public async Task Parent_delete_inside_a_caller_transaction_goes_through_the_archive_check(bool archiveBelow, bool async)
     {
         await using ClientDb client = ClientDb.Create();
@@ -252,14 +247,14 @@ public sealed class WriteRouterTests
         Guid stapler = client.Seed(new Item { Name = "Степлер", CategoryId = office });
         Guid catalog = client.Seed(new Item { Name = "Каталог 2019", CategoryId = office }, archiveBelow ? ClientDb.Archive : ClientDb.Instance);
         await using SampleDbContext db = client.Db();
-        Category category = await db.Categories.SingleAsync(x => x.Id == office, TestContext.Current.CancellationToken);
+        Category category = await db.Categories.SingleAsync(x => x.Id == office, TestContext.CurrentContext.CancellationToken);
 
         if (async)
         {
-            await using IDbContextTransaction tx = await db.Database.BeginTransactionAsync(TestContext.Current.CancellationToken);
+            await using IDbContextTransaction tx = await db.Database.BeginTransactionAsync(TestContext.CurrentContext.CancellationToken);
             db.Categories.Remove(category);
-            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
-            await tx.CommitAsync(TestContext.Current.CancellationToken);
+            await db.SaveChangesAsync(TestContext.CurrentContext.CancellationToken);
+            await tx.CommitAsync(TestContext.CurrentContext.CancellationToken);
         }
         else
         {
@@ -270,14 +265,16 @@ public sealed class WriteRouterTests
         }
 
         // Only the parent is queued; the owner cascades by its own schema (8.7).
-        OutboxEntry entry = Assert.Single(client.Replication.Store.Entries());
-        Assert.Equal(("Category", Wire.PkText(office), OutboxKind.Delete), (entry.Table, entry.Pk, entry.Kind));
-        Assert.Null(client.InstanceOf("Item", stapler));
-        Assert.Equal(archiveBelow ? ClientDb.Archive : null, client.InstanceOf("Category", office));
-        Assert.Equal(archiveBelow ? ClientDb.Archive : null, client.InstanceOf("Item", catalog));
+        List<OutboxEntry> entries = client.Replication.Store.Entries();
+        Assert.That(entries, Has.Count.EqualTo(1));
+        OutboxEntry entry = entries[0];
+        Assert.That((entry.Table, entry.Pk, entry.Kind), Is.EqualTo(("Category", Wire.PkText(office), OutboxKind.Delete)));
+        Assert.That(client.InstanceOf("Item", stapler), Is.Null);
+        Assert.That(client.InstanceOf("Category", office), Is.EqualTo(archiveBelow ? ClientDb.Archive : null));
+        Assert.That(client.InstanceOf("Item", catalog), Is.EqualTo(archiveBelow ? ClientDb.Archive : null));
     }
 
-    [Fact]
+    [Test]
     public async Task Archive_move_committed_before_the_parent_delete_gets_the_lock_survives()
     {
         await using ClientDb client = ClientDb.Create();
@@ -286,7 +283,7 @@ public sealed class WriteRouterTests
         Guid catalog = client.Seed(new Item { Name = "Каталог 2019", CategoryId = office });
         var starting = new TransactionStartingSignal();
         await using SampleDbContext db = client.Db(starting);
-        db.Categories.Remove(await db.Categories.SingleAsync(x => x.Id == office, TestContext.Current.CancellationToken));
+        db.Categories.Remove(await db.Categories.SingleAsync(x => x.Id == office, TestContext.CurrentContext.CancellationToken));
         // The agent moves the item to the archive (11.2, step 4) and holds the write lock while the user saves.
         using SqliteConnection agent = client.Replication.Store.Open(foreignKeys: false);
         using SqliteTransaction archiving = agent.BeginTransaction();
@@ -299,20 +296,20 @@ public sealed class WriteRouterTests
             cmd.ExecuteNonQuery();
         }
 
-        Task<int> save = Task.Run(() => db.SaveChanges(), TestContext.Current.CancellationToken);
-        await starting.Started.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+        Task<int> save = Task.Run(() => db.SaveChanges(), TestContext.CurrentContext.CancellationToken);
+        await starting.Started.WaitAsync(TimeSpan.FromSeconds(30), TestContext.CurrentContext.CancellationToken);
         archiving.Commit();
         await save;
 
-        Assert.Equal(ClientDb.Archive, client.InstanceOf("Item", catalog));
-        Assert.Equal(ClientDb.Archive, client.InstanceOf("Category", office));
-        Assert.Null(client.InstanceOf("Item", stapler));
+        Assert.That(client.InstanceOf("Item", catalog), Is.EqualTo(ClientDb.Archive));
+        Assert.That(client.InstanceOf("Category", office), Is.EqualTo(ClientDb.Archive));
+        Assert.That(client.InstanceOf("Item", stapler), Is.Null);
     }
 
     private static async Task SaveAsync(SampleDbContext db, bool async)
     {
         if (async)
-            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+            await db.SaveChangesAsync(TestContext.CurrentContext.CancellationToken);
         else
             db.SaveChanges();
     }
@@ -320,15 +317,15 @@ public sealed class WriteRouterTests
     /// <summary>The retried save carried out the parent delete: the parent went to the archive and its delete to the outbox (11.6).</summary>
     private static void AssertParentArchived(ClientDb client, Guid category, Guid archived)
     {
-        Assert.Equal(ClientDb.Archive, client.InstanceOf("Category", category));
-        Assert.Equal(ClientDb.Archive, client.InstanceOf("Item", archived));
-        Assert.Contains(client.Replication.Store.Entries(), e => (e.Table, e.Pk, e.Kind) == ("Category", Wire.PkText(category), OutboxKind.Delete));
+        Assert.That(client.InstanceOf("Category", category), Is.EqualTo(ClientDb.Archive));
+        Assert.That(client.InstanceOf("Item", archived), Is.EqualTo(ClientDb.Archive));
+        Assert.That(client.Replication.Store.Entries(), Has.Some.Matches<OutboxEntry>(e => (e.Table, e.Pk, e.Kind) == ("Category", Wire.PkText(category), OutboxKind.Delete)));
     }
 
     private static void AssertReleased(ClientDb client, SampleDbContext db)
     {
-        Assert.Null(db.Database.CurrentTransaction);
-        Assert.Equal(ConnectionState.Closed, db.Database.GetDbConnection().State);
+        Assert.That(db.Database.CurrentTransaction, Is.Null);
+        Assert.That(db.Database.GetDbConnection().State, Is.EqualTo(ConnectionState.Closed));
         // A second writer, as the agent: while the lock is held this fails with "database is locked" after 2 s.
         using SqliteConnection c = client.Replication.Store.Open();
         using SqliteCommand cmd = c.CreateCommand();
@@ -342,8 +339,8 @@ public sealed class WriteRouterTests
     {
         db.ChangeTracker.Clear();
         db.Log.Add(new LogEntry { Text = "нотатка" }).SetInstance(SyncColumns.LocalInstance);
-        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
-        Assert.Empty(client.Replication.Store.Entries());
+        await db.SaveChangesAsync(TestContext.CurrentContext.CancellationToken);
+        Assert.That(client.Replication.Store.Entries(), Is.Empty);
     }
 
     /// <summary>Completes when the router asks for its write transaction; the BEGIN itself then waits for the lock.</summary>

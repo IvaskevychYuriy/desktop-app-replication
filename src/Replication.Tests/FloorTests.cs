@@ -1,8 +1,8 @@
 using Microsoft.Data.Sqlite;
+using NUnit.Framework;
 using Replication.Model;
 using Replication.Owner;
 using Sample.Lab;
-using Xunit;
 
 namespace Replication.Tests;
 
@@ -32,7 +32,7 @@ public sealed class FloorTests
         return (floors, cursors);
     }
 
-    [Fact]
+    [Test]
     public async Task Floor_is_the_lowest_cursor_of_the_active_clients_for_each_model_table()
     {
         await using Lab lab = await Lab.StartAsync();
@@ -50,17 +50,17 @@ public sealed class FloorTests
         store.RecomputeFloor();
 
         (Dictionary<string, long> floors, List<(string Tbl, long Cursor)> cursors) = Read(lab);
-        Assert.NotEmpty(cursors);
+        Assert.That(cursors, Is.Not.Empty);
         foreach (SyncTable t in store.Model.Tables)
-            Assert.Equal(cursors.Where(x => x.Tbl == t.Name).Select(x => x.Cursor).DefaultIfEmpty(OwnerStore.NoFloor).Min(), floors[t.Name]);
-        Assert.Equal(5, floors["Retired"]);
+            Assert.That(floors[t.Name], Is.EqualTo(cursors.Where(x => x.Tbl == t.Name).Select(x => x.Cursor).DefaultIfEmpty(OwnerStore.NoFloor).Min()));
+        Assert.That(floors["Retired"], Is.EqualTo(5));
 
         // Both clients leave the activity window: nothing holds the base back any more.
         lab.Owner.AdvanceClock(store.Options.ActivityWindow + TimeSpan.FromHours(1));
 
         floors = Read(lab).Floors;
         foreach (SyncTable t in store.Model.Tables)
-            Assert.Equal(OwnerStore.NoFloor, floors[t.Name]);
-        Assert.Equal(5, floors["Retired"]);
+            Assert.That(floors[t.Name], Is.EqualTo(OwnerStore.NoFloor));
+        Assert.That(floors["Retired"], Is.EqualTo(5));
     }
 }

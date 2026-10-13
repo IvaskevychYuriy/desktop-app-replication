@@ -1,64 +1,64 @@
+using NUnit.Framework;
 using Replication.Model;
-using Xunit;
 
 namespace Replication.Tests;
 
 public sealed class CursorStateTests
 {
-    [Fact]
+    [Test]
     public void Ranges_merge_and_lift_the_cursor()
     {
         var k = new CursorState(10);
         k.AddRange(40, 50);
         k.AddRange(20, 30);
-        Assert.Equal([(20L, 30L), (40L, 50L)], k.Ranges);
-        Assert.Equal([(50L, 60L), (30L, 40L), (10L, 20L)], k.Gaps(60));
+        Assert.That(k.Ranges, Is.EqualTo(new[] { (20L, 30L), (40L, 50L) }));
+        Assert.That(k.Gaps(60), Is.EqualTo(new[] { (50L, 60L), (30L, 40L), (10L, 20L) }));
         k.AddRange(30, 40);
-        Assert.Equal([(20L, 50L)], k.Ranges);
+        Assert.That(k.Ranges, Is.EqualTo(new[] { (20L, 50L) }));
         k.AddRange(10, 20);
-        Assert.Equal(50, k.Cursor);
-        Assert.Empty(k.Ranges);
+        Assert.That(k.Cursor, Is.EqualTo(50));
+        Assert.That(k.Ranges, Is.Empty);
     }
 
-    [Fact]
+    [Test]
     public void Wire_encoding_round_trips()
     {
         var k = new CursorState(1000, [(1500L, 1600L), (2000L, 2100L)]);
         CursorState back = CursorState.FromWire(k.ToWire("T"));
-        Assert.Equal(k.Cursor, back.Cursor);
-        Assert.Equal(k.Ranges, back.Ranges);
+        Assert.That(back.Cursor, Is.EqualTo(k.Cursor));
+        Assert.That(back.Ranges, Is.EqualTo(k.Ranges));
     }
 
-    [Fact]
+    [Test]
     public void Head_lifts_only_tables_without_ranges()
     {
         var a = new CursorState(5);
         var b = new CursorState(5, [(7L, 9L)]);
         a.LiftTo(20);
         b.LiftTo(20);
-        Assert.Equal(20, a.Cursor);
-        Assert.Equal(5, b.Cursor);
+        Assert.That(a.Cursor, Is.EqualTo(20));
+        Assert.That(b.Cursor, Is.EqualTo(5));
     }
 
-    [Fact]
+    [Test]
     public void A_range_spanning_several_ranges_merges_them()
     {
         var k = new CursorState(0, [(10L, 12L), (14L, 16L), (18L, 20L)]);
         k.AddRange(13, 19);
-        Assert.Equal(0, k.Cursor);
-        Assert.Equal([(10L, 12L), (13L, 20L)], k.Ranges);
+        Assert.That(k.Cursor, Is.EqualTo(0));
+        Assert.That(k.Ranges, Is.EqualTo(new[] { (10L, 12L), (13L, 20L) }));
     }
 
-    [Fact]
+    [Test]
     public void A_range_that_bridges_ranges_to_the_cursor_lifts_it_past_them()
     {
         var k = new CursorState(10, [(12L, 14L), (16L, 18L)]);
         k.AddRange(10, 17);
-        Assert.Equal(18, k.Cursor);
-        Assert.Empty(k.Ranges);
+        Assert.That(k.Cursor, Is.EqualTo(18));
+        Assert.That(k.Ranges, Is.Empty);
     }
 
-    [Fact]
+    [Test]
     public void Random_adds_match_a_per_version_model()
     {
         const int Top = 40;
@@ -95,7 +95,7 @@ public sealed class CursorStateTests
             else
                 ranges.Add((v - 1, v));
         }
-        Assert.Equal(cursor, k.Cursor);
-        Assert.Equal(ranges, k.Ranges);
+        Assert.That(k.Cursor, Is.EqualTo(cursor));
+        Assert.That(k.Ranges, Is.EqualTo(ranges));
     }
 }

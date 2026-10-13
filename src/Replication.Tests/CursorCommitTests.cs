@@ -1,14 +1,14 @@
 using Microsoft.Data.Sqlite;
+using NUnit.Framework;
 using Replication.Model;
 using Sample.Lab;
-using Xunit;
 
 namespace Replication.Tests;
 
 /// <summary>Design 6.4, 14: the cursors move only with the transaction that applied the batch.</summary>
 public sealed class CursorCommitTests
 {
-    [Fact]
+    [Test]
     public async Task Batch_whose_cursor_save_fails_arrives_again()
     {
         await using Lab lab = await Lab.StartAsync();
@@ -31,20 +31,20 @@ public sealed class CursorCommitTests
         TestDb.Exec(c, "UPDATE _test_fault SET armed = 0");
         await lab.SettleAsync();
 
-        Assert.Empty(Inspect.Diff(lab.Owner, lab.C1));
+        Assert.That(Inspect.Diff(lab.Owner, lab.C1), Is.Empty);
         Dictionary<string, CursorState> saved = lab.C1.Replication.Store.LoadCursors(c, lab.C1.Instance);
         foreach ((string table, CursorState k) in saved)
-            Assert.Equal(k.ToString(), lab.C1.Agent.CursorOf(table).ToString());
+            Assert.That(lab.C1.Agent.CursorOf(table).ToString(), Is.EqualTo(k.ToString()));
     }
 
-    [Fact]
+    [Test]
     public void Working_copy_does_not_change_the_published_cursor()
     {
         var published = new CursorState(10, [(20L, 30L)]);
         CursorState copy = published.Clone();
         copy.AddRange(40, 50);
         copy.AddRange(10, 20);
-        Assert.Equal("10 + (20,30]", published.ToString());
-        Assert.Equal("30 + (40,50]", copy.ToString());
+        Assert.That(published.ToString(), Is.EqualTo("10 + (20,30]"));
+        Assert.That(copy.ToString(), Is.EqualTo("30 + (40,50]"));
     }
 }

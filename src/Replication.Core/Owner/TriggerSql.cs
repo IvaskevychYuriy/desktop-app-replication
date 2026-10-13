@@ -7,7 +7,14 @@ namespace Replication.Owner;
 /// <summary>Triggers generated from the EF model for every replicated table (5.2).</summary>
 internal static class TriggerSql
 {
-    public static IEnumerable<string> For(SyncTable t)
+    public static IEnumerable<string> Drop(SyncTable t)
+    {
+        yield return $"DROP TRIGGER IF EXISTS \"_sync_{t.Name}_ins\";";
+        yield return $"DROP TRIGGER IF EXISTS \"_sync_{t.Name}_upd\";";
+        yield return $"DROP TRIGGER IF EXISTS \"_sync_{t.Name}_del\";";
+    }
+
+    public static IEnumerable<string> Create(SyncTable t)
     {
         string table = Q(t.Name);
         string name = t.Name.Replace("'", "''");
@@ -24,10 +31,6 @@ internal static class TriggerSql
         if (t.Columns.Count == 0)
             changed.Append('0');
         string floor = $"(SELECT floor FROM _sync_floor WHERE tbl = '{name}')";
-
-        yield return $"DROP TRIGGER IF EXISTS \"_sync_{t.Name}_ins\";";
-        yield return $"DROP TRIGGER IF EXISTS \"_sync_{t.Name}_upd\";";
-        yield return $"DROP TRIGGER IF EXISTS \"_sync_{t.Name}_del\";";
 
         yield return $"""
             CREATE TRIGGER "_sync_{t.Name}_ins" AFTER INSERT ON {table} BEGIN

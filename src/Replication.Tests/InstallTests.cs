@@ -1,8 +1,8 @@
 using Microsoft.Data.Sqlite;
+using NUnit.Framework;
 using Replication.Model;
 using Replication.Owner;
 using Sample.Domain;
-using Xunit;
 
 namespace Replication.Tests;
 
@@ -27,10 +27,10 @@ public sealed class InstallTests
         return store.Head(c);
     }
 
-    [Fact]
+    [Test]
     public async Task First_install_gives_every_existing_row_its_own_version()
     {
-        CancellationToken ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.CurrentContext.CancellationToken;
         string dir = TestDb.NewDir();
         string path = Path.Combine(dir, "owner.db");
         SyncModel model;
@@ -56,24 +56,24 @@ public sealed class InstallTests
         foreach (SyncTable t in model.Tables)
         {
             List<(long Version, long Base, long Mask)> rows = Stamps(store, t);
-            Assert.Equal(Enumerable.Range(0, rows.Count).Select(i => next + i), rows.Select(x => x.Version).Order());
-            Assert.All(rows, x => Assert.Equal((0L, t.FullMask), (x.Base, x.Mask)));
+            Assert.That(rows.Select(x => x.Version).Order(), Is.EqualTo(Enumerable.Range(0, rows.Count).Select(i => next + i)));
+            Assert.That(rows.Select(x => (x.Base, x.Mask)), Is.All.EqualTo((0L, t.FullMask)));
             next += rows.Count;
         }
         long head = Head(store);
-        Assert.Equal(1 + 50 + 20, head);
-        Assert.Equal(head + 1, next);
+        Assert.That(head, Is.EqualTo(1 + 50 + 20));
+        Assert.That(next, Is.EqualTo(head + 1));
 
         // A second start has nothing to stamp, and the triggers number the next row.
         store.Install();
-        Assert.Equal(head, Head(store));
+        Assert.That(Head(store), Is.EqualTo(head));
         await using (SampleDbContext db = SampleDbContext.Open(path))
         {
             db.Log.Add(new LogEntry { Text = "Після ввімкнення" });
             await db.SaveChangesAsync(ct);
         }
-        Assert.Equal(head + 1, Head(store));
-        Assert.Contains(head + 1, Stamps(store, model["Log"]).Select(x => x.Version));
+        Assert.That(Head(store), Is.EqualTo(head + 1));
+        Assert.That(Stamps(store, model["Log"]).Select(x => x.Version), Does.Contain(head + 1));
         SqliteConnection.ClearAllPools();
     }
 }

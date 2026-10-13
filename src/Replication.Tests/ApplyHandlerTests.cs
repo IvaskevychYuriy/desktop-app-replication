@@ -1,16 +1,16 @@
 using Microsoft.EntityFrameworkCore;
+using NUnit.Framework;
 using Replication.Client;
 using Replication.Model;
 using Sample.Domain;
 using Sample.Lab;
-using Xunit;
 
 namespace Replication.Tests;
 
 /// <summary>Design 6.5: Apply on the owner, through the real gRPC path.</summary>
-public sealed class ApplyHandlerTests(ITestOutputHelper output)
+public sealed class ApplyHandlerTests
 {
-    [Fact]
+    [Test]
     public async Task Children_of_a_create_rejected_as_unique_are_rejected_in_the_same_batch()
     {
         var log = new SyncLog();
@@ -31,45 +31,45 @@ public sealed class ApplyHandlerTests(ITestOutputHelper output)
                 var category = new Category { Name = "Офіс" };
                 db.Categories.Add(category).SetInstance(lab.C1.Instance);
                 db.Items.Add(new Item { Name = "Діркопробивач", Price = 150, Category = category }).SetInstance(lab.C1.Instance);
-                await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+                await db.SaveChangesAsync(TestContext.CurrentContext.CancellationToken);
             }
             await lab.SyncNowAsync(lab.C1);
             await lab.SettleAsync();
 
             AgentStatus status = lab.C1.Agent.GetStatus();
-            Assert.Equal(0, status.Pending);
-            Assert.Null(status.LastError);
-            Assert.Single(Inspect.OwnerRows(lab.Owner, "Category"), r => r.Label == "Офіс");
-            Assert.False(Inspect.OwnerHas(lab.Owner, "Діркопробивач"));
+            Assert.That(status.Pending, Is.EqualTo(0));
+            Assert.That(status.LastError, Is.Null);
+            Assert.That(Inspect.OwnerRows(lab.Owner, "Category"), Has.Exactly(1).Matches<RowView>(r => r.Label == "Офіс"));
+            Assert.That(Inspect.OwnerHas(lab.Owner, "Діркопробивач"), Is.False);
             List<ClientNote> notes = lab.C1.Replication.Store.Notes();
-            Assert.Contains(notes, n => n.Text.Contains("«Офіс»", StringComparison.Ordinal) && n.Text.Contains("вже є запис", StringComparison.Ordinal));
-            Assert.Contains(notes, n => n.Text.Contains("«Діркопробивач»", StringComparison.Ordinal) && n.Text.Contains("батьківський запис не збережено або видалено", StringComparison.Ordinal));
+            Assert.That(notes, Has.Some.Matches<ClientNote>(n => n.Text.Contains("«Офіс»", StringComparison.Ordinal) && n.Text.Contains("вже є запис", StringComparison.Ordinal)));
+            Assert.That(notes, Has.Some.Matches<ClientNote>(n => n.Text.Contains("«Діркопробивач»", StringComparison.Ordinal) && n.Text.Contains("батьківський запис не збережено або видалено", StringComparison.Ordinal)));
             lock (entries)
             {
-                Assert.Contains(entries, e => e.Source == "owner" && e.Text.Contains("Rejected (unique)", StringComparison.Ordinal)
-                    && e.Text.Contains("Rejected (parent deleted)", StringComparison.Ordinal));
-                Assert.DoesNotContain(entries, e => e.Text.StartsWith("Apply: Unknown", StringComparison.Ordinal));
+                Assert.That(entries, Has.Some.Matches<SyncLogEntry>(e => e.Source == "owner" && e.Text.Contains("Rejected (unique)", StringComparison.Ordinal)
+                    && e.Text.Contains("Rejected (parent deleted)", StringComparison.Ordinal)));
+                Assert.That(entries, Has.None.Matches<SyncLogEntry>(e => e.Text.StartsWith("Apply: Unknown", StringComparison.Ordinal)));
             }
 
             // The outbox is not blocked: a later edit reaches the owner.
             await lab.C1.SetPriceAsync("Степлер", 777);
             await lab.SettleAsync();
-            Assert.Equal(777, Inspect.OwnerItem(lab.Owner, "Степлер")?.Price);
+            Assert.That(Inspect.OwnerItem(lab.Owner, "Степлер")?.Price, Is.EqualTo(777));
         }
         finally
         {
             lock (entries)
             {
                 foreach (SyncLogEntry e in entries)
-                    output.WriteLine($"{e.At:HH:mm:ss.fff} [{e.Source}] {e.Text}");
+                    TestContext.Out.WriteLine($"{e.At:HH:mm:ss.fff} [{e.Source}] {e.Text}");
             }
         }
     }
 
-    [Fact]
+    [Test]
     public async Task Patch_pointing_to_a_create_rejected_as_unique_goes_back_to_the_owners_row()
     {
-        CancellationToken ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.CurrentContext.CancellationToken;
         await using Lab lab = await StartWithUniqueNamesAsync();
 
         // Offline, the user creates a duplicate category and moves an existing item into it: both go in one batch (8.4).
@@ -85,11 +85,11 @@ public sealed class ApplyHandlerTests(ITestOutputHelper output)
 
         // The rejected create stays in the replica (9); the item gets the owner's row back, in its old category.
         await WaitForDiffAsync(lab, $"Category {Wire.Short(Wire.PkText(duplicate.Id))}: зайвий у репліці");
-        Assert.Contains(lab.C1.Replication.Store.Notes(), n => n.Text.StartsWith("правку запису «Степлер» не збережено", StringComparison.Ordinal)
-            && n.Text.Contains("батьківський запис не збережено або видалено", StringComparison.Ordinal));
+        Assert.That(lab.C1.Replication.Store.Notes(), Has.Some.Matches<ClientNote>(n => n.Text.StartsWith("правку запису «Степлер» не збережено", StringComparison.Ordinal)
+            && n.Text.Contains("батьківський запис не збережено або видалено", StringComparison.Ordinal)));
     }
 
-    [Fact]
+    [Test]
     public async Task Patch_rejected_as_unique_goes_back_to_the_owners_row()
     {
         await using Lab lab = await StartWithUniqueNamesAsync();
@@ -98,8 +98,8 @@ public sealed class ApplyHandlerTests(ITestOutputHelper output)
         await lab.C1.RenameCategoryAsync(store, "Офіс");
 
         await WaitForDiffAsync(lab);
-        Assert.Contains(lab.C1.Replication.Store.Notes(), n => n.Text.StartsWith("правку запису «Офіс» не збережено", StringComparison.Ordinal)
-            && n.Text.Contains("вже є запис", StringComparison.Ordinal));
+        Assert.That(lab.C1.Replication.Store.Notes(), Has.Some.Matches<ClientNote>(n => n.Text.StartsWith("правку запису «Офіс» не збережено", StringComparison.Ordinal)
+            && n.Text.Contains("вже є запис", StringComparison.Ordinal)));
     }
 
     /// <summary>A lab with C1 synced, and a unique business column on the owner only (9): the client's replica has no such index.</summary>

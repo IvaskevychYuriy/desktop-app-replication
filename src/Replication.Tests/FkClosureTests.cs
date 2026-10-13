@@ -1,18 +1,18 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using NUnit.Framework;
 using Replication.Client;
 using Replication.Model;
 using Replication.Owner;
 using Sample.Lab;
-using Xunit;
 
 namespace Replication.Tests;
 
 /// <summary>Design 8.4: a create goes in the same or an earlier batch than the rows that point to it, FK cycles included.</summary>
 public sealed class FkClosureTests
 {
-    [Fact]
+    [Test]
     public async Task Row_created_pointing_to_itself_is_sent()
     {
         await using GraphPair pair = await GraphPair.StartAsync();
@@ -21,20 +21,20 @@ public sealed class FkClosureTests
         await using (GraphDbContext db = pair.ClientDb())
         {
             db.Nodes.Add(node).SetInstance(pair.Instance);
-            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+            await db.SaveChangesAsync(TestContext.CurrentContext.CancellationToken);
             node.ParentId = node.Id;
-            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+            await db.SaveChangesAsync(TestContext.CurrentContext.CancellationToken);
         }
 
         await pair.SyncAsync();
 
         await using GraphDbContext owner = pair.OwnerDb();
-        Node sent = await owner.Nodes.SingleAsync(x => x.Id == node.Id, TestContext.Current.CancellationToken);
-        Assert.Equal(node.Id, sent.ParentId);
-        Assert.Empty(pair.Client.Store.Entries());
+        Node sent = await owner.Nodes.SingleAsync(x => x.Id == node.Id, TestContext.CurrentContext.CancellationToken);
+        Assert.That(sent.ParentId, Is.EqualTo(node.Id));
+        Assert.That(pair.Client.Store.Entries(), Is.Empty);
     }
 
-    [Fact]
+    [Test]
     public async Task Rows_created_pointing_to_each_other_go_in_one_batch()
     {
         await using GraphPair pair = await GraphPair.StartAsync();
@@ -44,32 +44,34 @@ public sealed class FkClosureTests
         await using (GraphDbContext db = pair.ClientDb())
         {
             db.Depts.Add(dept).SetInstance(pair.Instance);
-            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+            await db.SaveChangesAsync(TestContext.CurrentContext.CancellationToken);
             emp.DeptId = dept.Id;
             db.Emps.Add(emp).SetInstance(pair.Instance);
-            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+            await db.SaveChangesAsync(TestContext.CurrentContext.CancellationToken);
             dept.ManagerId = emp.Id;
-            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+            await db.SaveChangesAsync(TestContext.CurrentContext.CancellationToken);
         }
 
         await pair.SyncAsync();
 
         await using GraphDbContext owner = pair.OwnerDb();
-        Assert.Equal(emp.Id, (await owner.Depts.SingleAsync(x => x.Id == dept.Id, TestContext.Current.CancellationToken)).ManagerId);
-        Assert.Equal(dept.Id, (await owner.Emps.SingleAsync(x => x.Id == emp.Id, TestContext.Current.CancellationToken)).DeptId);
-        Assert.Empty(pair.Client.Store.Entries());
-        string apply = Assert.Single(pair.Applies);
-        Assert.Contains(Wire.Short(Wire.PkText(dept.Id)), apply);
-        Assert.Contains(Wire.Short(Wire.PkText(emp.Id)), apply);
+        Assert.That((await owner.Depts.SingleAsync(x => x.Id == dept.Id, TestContext.CurrentContext.CancellationToken)).ManagerId, Is.EqualTo(emp.Id));
+        Assert.That((await owner.Emps.SingleAsync(x => x.Id == emp.Id, TestContext.CurrentContext.CancellationToken)).DeptId, Is.EqualTo(dept.Id));
+        Assert.That(pair.Client.Store.Entries(), Is.Empty);
+        IReadOnlyList<string> applies = pair.Applies;
+        Assert.That(applies, Has.Count.EqualTo(1));
+        string apply = applies[0];
+        Assert.That(apply, Does.Contain(Wire.Short(Wire.PkText(dept.Id))));
+        Assert.That(apply, Does.Contain(Wire.Short(Wire.PkText(emp.Id))));
     }
 
-    [Fact]
+    [Test]
     public async Task Acyclic_chain_goes_parents_first_and_bulk_actions_last_in_one_batch()
     {
         await using GraphPair pair = await GraphPair.StartAsync(owner => owner.Nodes.Add(new Node { Name = "Старий" }));
         await pair.GoOfflineAsync();
         // The bulk action is queued first, yet interactive actions go before it.
-        Assert.Equal(1, await pair.Agent.DeleteWhereAsync("Node", new Predicate("Name", "Старий")));
+        Assert.That(await pair.Agent.DeleteWhereAsync("Node", new Predicate("Name", "Старий")), Is.EqualTo(1));
         var a = new Node { Name = "A" };
         var b = new Node { Name = "B" };
         var c = new Node { Name = "C" };
@@ -77,24 +79,26 @@ public sealed class FkClosureTests
         {
             foreach (Node n in new[] { a, b, c })
                 db.Nodes.Add(n).SetInstance(pair.Instance);
-            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+            await db.SaveChangesAsync(TestContext.CurrentContext.CancellationToken);
             // A → B → C: the outbox holds A, B, C in this order, the parents must reach the owner first.
             a.ParentId = b.Id;
             b.ParentId = c.Id;
-            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+            await db.SaveChangesAsync(TestContext.CurrentContext.CancellationToken);
         }
 
         await pair.SyncAsync();
 
-        string apply = Assert.Single(pair.Applies);
+        IReadOnlyList<string> applies = pair.Applies;
+        Assert.That(applies, Has.Count.EqualTo(1));
+        string apply = applies[0];
         int[] at = [.. new[] { c, b, a }.Select(n => apply.IndexOf(Wire.Short(Wire.PkText(n.Id)), StringComparison.Ordinal))];
-        Assert.All(at, i => Assert.True(i >= 0, apply));
-        Assert.True(at[0] < at[1] && at[1] < at[2], apply);
-        Assert.True(at[2] < apply.IndexOf("[масова]", StringComparison.Ordinal), apply);
+        Assert.That(at, Is.All.GreaterThanOrEqualTo(0), apply);
+        Assert.That(at[0] < at[1] && at[1] < at[2], Is.True, apply);
+        Assert.That(at[2] < apply.IndexOf("[масова]", StringComparison.Ordinal), Is.True, apply);
         await using GraphDbContext owner = pair.OwnerDb();
-        Assert.Equal(["A", "B", "C"], await owner.Nodes.OrderBy(x => x.Name).Select(x => x.Name).ToListAsync(TestContext.Current.CancellationToken));
-        Assert.Equal(b.Id, (await owner.Nodes.SingleAsync(x => x.Id == a.Id, TestContext.Current.CancellationToken)).ParentId);
-        Assert.Equal(c.Id, (await owner.Nodes.SingleAsync(x => x.Id == b.Id, TestContext.Current.CancellationToken)).ParentId);
+        Assert.That(await owner.Nodes.OrderBy(x => x.Name).Select(x => x.Name).ToListAsync(TestContext.CurrentContext.CancellationToken), Is.EqualTo(new[] { "A", "B", "C" }));
+        Assert.That((await owner.Nodes.SingleAsync(x => x.Id == a.Id, TestContext.CurrentContext.CancellationToken)).ParentId, Is.EqualTo(b.Id));
+        Assert.That((await owner.Nodes.SingleAsync(x => x.Id == b.Id, TestContext.CurrentContext.CancellationToken)).ParentId, Is.EqualTo(c.Id));
     }
 }
 

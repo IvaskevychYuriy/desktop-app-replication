@@ -1,17 +1,17 @@
 using Grpc.Core;
 using Grpc.Net.Client;
+using NUnit.Framework;
 using Replication.Model;
 using Replication.Owner;
 using Replication.Protocol;
 using Sample.Lab;
-using Xunit;
 
 namespace Replication.Tests;
 
 /// <summary>The owner's Subscribe stream: a fault in either loop ends the call with an error, so the client reconnects (14).</summary>
 public sealed class SubscribeSessionTests
 {
-    [Fact]
+    [Test]
     public async Task Main_loop_fault_ends_the_stream_and_the_client_reconnects()
     {
         await using Lab lab = await Lab.StartAsync();
@@ -25,16 +25,16 @@ public sealed class SubscribeSessionTests
         // Once the row is repaired, the reconnecting client catches up.
         OwnerSql.Exec(lab, $"UPDATE Log SET Id = '{Wire.PkText(Guid.NewGuid())}' WHERE Id = 'not-a-guid'");
         await lab.SettleAsync();
-        Assert.Empty(Inspect.Diff(lab.Owner, lab.C1));
+        Assert.That(Inspect.Diff(lab.Owner, lab.C1), Is.Empty);
     }
 
-    [Fact]
+    [Test]
     public async Task Reader_fault_ends_the_stream_with_an_error()
     {
         await using Lab lab = await Lab.StartAsync();
         OwnerStore store = lab.Owner.Store;
         long head = lab.Owner.Head();
-        CancellationToken ct = TestContext.Current.CancellationToken;
+        CancellationToken ct = TestContext.CurrentContext.CancellationToken;
         using GrpcChannel channel = GrpcChannel.ForAddress(lab.Owner.Address);
         var client = new Sync.SyncClient(channel);
         using AsyncDuplexStreamingCall<SubscribeMessage, ChangeMessage> call = client.Subscribe(deadline: DateTime.UtcNow.AddSeconds(20), cancellationToken: ct);
@@ -49,18 +49,18 @@ public sealed class SubscribeSessionTests
         ack.Cursors.Add(new TableCursor { Tbl = "Item", Cursor = head });
         await call.RequestStream.WriteAsync(new SubscribeMessage { Ack = ack }, ct);
 
-        RpcException e = await Assert.ThrowsAsync<RpcException>(async () =>
+        RpcException e = Assert.ThrowsAsync<RpcException>(async () =>
         {
             while (await call.ResponseStream.MoveNext(ct))
             {
                 // Catch-up and online messages, until the owner ends the stream.
             }
         });
-        Assert.Equal(StatusCode.Unknown, e.StatusCode);
-        Assert.Contains(nameof(ArgumentException), e.Status.Detail);
+        Assert.That(e.StatusCode, Is.EqualTo(StatusCode.Unknown));
+        Assert.That(e.Status.Detail, Does.Contain(nameof(ArgumentException)));
     }
 
-    [Fact]
+    [Test]
     public async Task Fault_right_after_the_handshake_still_unmarks_the_client()
     {
         // A log subscriber is user code; the first accepted Start makes it throw once.
@@ -76,7 +76,7 @@ public sealed class SubscribeSessionTests
 
         // The first session fails after registering the client; the reconnect goes online.
         await lab.SyncNowAsync(lab.C1);
-        Assert.Equal(1, Volatile.Read(ref thrown));
+        Assert.That(Volatile.Read(ref thrown), Is.EqualTo(1));
 
         lab.C1.Link = false;
         await Lab.WaitAsync(() => !lab.Owner.Store.IsSubscribed(c1), TimeSpan.FromSeconds(10), "Клієнт 1 лишився відміченим як підписаний");

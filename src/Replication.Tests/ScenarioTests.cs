@@ -1,16 +1,15 @@
 using System.Collections.Concurrent;
+using NUnit.Framework;
 using Sample.Lab;
-using Xunit;
 
 namespace Replication.Tests;
 
 /// <summary>Every scenario of the demo page, run against the real core over gRPC on localhost.</summary>
-public sealed class ScenarioTests(ITestOutputHelper output)
+public sealed class ScenarioTests
 {
-    public static TheoryData<string> Ids => [.. Scenarios.All.Select(s => s.Id)];
+    public static IEnumerable<string> Ids => Scenarios.All.Select(s => s.Id);
 
-    [Theory]
-    [MemberData(nameof(Ids))]
+    [TestCaseSource(nameof(Ids))]
     public async Task Scenario_converges(string id)
     {
         var log = new SyncLog();
@@ -33,8 +32,8 @@ public sealed class ScenarioTests(ITestOutputHelper output)
         finally
         {
             foreach (string l in lines)
-                output.WriteLine(l);
+                TestContext.Out.WriteLine(l);
         }
-        Assert.Empty(problems);
+        Assert.That(problems, Is.Empty);
     }
 }
