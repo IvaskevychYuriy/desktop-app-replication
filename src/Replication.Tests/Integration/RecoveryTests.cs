@@ -161,7 +161,7 @@ public sealed class RecoveryTests
     private async Task StartOwnerAsync()
     {
         _owner = await OwnerNode.StartAsync(OwnerPath, _syncLog, _port, configure: o => o.OnlineInterval = TimeSpan.FromMilliseconds(300));
-        _port = _owner.Host.Port;
+        _port = _owner.Port;
     }
 
     private async Task StopOwnerAsync()

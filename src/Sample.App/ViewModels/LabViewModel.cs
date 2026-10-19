@@ -216,7 +216,7 @@ public sealed partial class OwnerWindowViewModel : ObservableObject
         {
             OwnerNode node = await Task.Run(() => OwnerNode.StartAsync(o.DbPath, log, o.Port, o.ListenAnywhere));
             Owner = new OwnerPanelViewModel(node);
-            State = $"gRPC-сервер на порту {node.Host.Port}, БД {node.DbPath}";
+            State = $"gRPC-сервер на порту {node.Port}, БД {node.DbPath}";
             var timer = new DispatcherTimer(TimeSpan.FromMilliseconds(500), DispatcherPriority.Background, (_, _) => Owner.Refresh());
             timer.Start();
         }

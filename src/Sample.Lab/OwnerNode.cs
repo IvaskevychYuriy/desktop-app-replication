@@ -18,39 +18,51 @@ public sealed class OwnerNode : IAsyncDisposable
     private readonly Random _rnd = new(42);
     private int _logN;
 
-    private OwnerNode(string dbPath, OwnerStore store, OwnerHost host, SyncLog log)
+    private readonly Func<string> _address;
+    private readonly IAsyncDisposable? _host;
+
+    /// <param name="address">Where the gRPC server listens, known once the host is up.</param>
+    /// <param name="host">Disposed with the node when the node owns the server (lab); null when a web host does.</param>
+    public OwnerNode(OwnerStore store, SyncLog log, Func<string> address, IAsyncDisposable? host = null)
     {
-        DbPath = dbPath;
         Store = store;
-        Host = host;
         Log = log;
+        _address = address;
+        _host = host;
     }
 
-    public string DbPath { get; }
+    public string DbPath => Store.DbPath;
     public OwnerStore Store { get; }
-    public OwnerHost Host { get; }
     public SyncLog Log { get; }
-    public string Address => Host.Address;
+    public string Address => _address();
+    public int Port => new Uri(Address).Port;
 
     public static async Task<OwnerNode> StartAsync(string dbPath, SyncLog log, int port = 0, bool listenAnywhere = false, Action<OwnerOptions>? configure = null)
     {
-        SyncModel model;
-        bool empty;
-        await using (SampleDbContext db = SampleDbContext.Open(dbPath))
-        {
-            await db.Database.EnsureCreatedAsync();
-            model = SyncModel.From(db);
-            empty = !await db.Categories.AnyAsync();
-        }
+        bool empty = await EnsureCreatedAsync(dbPath);
         var options = new OwnerOptions { Log = log };
         configure?.Invoke(options);
-        var store = new OwnerStore(dbPath, model, options);
+        var store = new OwnerStore(dbPath, ModelOf(dbPath), options);
         store.Install();
         OwnerHost host = await OwnerHost.StartAsync(store, port, listenAnywhere);
-        var node = new OwnerNode(dbPath, store, host, log);
+        var node = new OwnerNode(store, log, () => host.Address, host);
         if (empty)
             await node.SeedAsync();
         return node;
+    }
+
+    /// <returns>True when the database has no data yet.</returns>
+    internal static async Task<bool> EnsureCreatedAsync(string dbPath)
+    {
+        await using SampleDbContext db = SampleDbContext.Open(dbPath);
+        await db.Database.EnsureCreatedAsync();
+        return !await db.Categories.AnyAsync();
+    }
+
+    internal static SyncModel ModelOf(string dbPath)
+    {
+        using SampleDbContext db = SampleDbContext.Open(dbPath);
+        return SyncModel.From(db);
     }
 
     public SampleDbContext Db() => SampleDbContext.Open(DbPath);
@@ -63,7 +75,7 @@ public sealed class OwnerNode : IAsyncDisposable
 
     private LogEntry NextLogEntry() => new() { Text = $"Автоматика: перерахунок залишків #{++_logN}" };
 
-    private async Task SeedAsync()
+    internal async Task SeedAsync()
     {
         await using SampleDbContext db = Db();
         Dictionary<string, Category> cats = new[] { "Офіс", "Склад", "Архів" }.ToDictionary(n => n, n => new Category { Name = n });
@@ -223,5 +235,5 @@ public sealed class OwnerNode : IAsyncDisposable
         Log.Write("owner", $"годинник власника +{by.TotalDays:0.#} дн.");
     }
 
-    public ValueTask DisposeAsync() => Host.DisposeAsync();
+    public ValueTask DisposeAsync() => _host?.DisposeAsync() ?? ValueTask.CompletedTask;
 }
