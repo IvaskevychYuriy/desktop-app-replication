@@ -2,6 +2,7 @@
   <Project Path="Replication.Core/Replication.Core.csproj" />
   <Project Path="Replication.Tests/Replication.Tests.csproj" />
   <Project Path="Sample.App/Sample.App.csproj" />
+  <Project Path="Sample.Client/Sample.Client.csproj" />
   <Project Path="Sample.Domain/Sample.Domain.csproj" />
   <Project Path="Sample.Lab/Sample.Lab.csproj" />
   <Project Path="Sample.Owner/Sample.Owner.csproj" />

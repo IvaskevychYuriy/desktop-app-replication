@@ -1,0 +1,8 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="Sample.Client.ClientApp"
+             RequestedThemeVariant="Default">
+  <Application.Styles>
+    <StyleInclude Source="avares://ReplicationSample/Styles.axaml" />
+  </Application.Styles>
+</Application>

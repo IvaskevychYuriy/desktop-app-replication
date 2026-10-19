@@ -1,0 +1,36 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:Sample.Client.ViewModels"
+        xmlns:avm="using:Sample.App.ViewModels"
+        xmlns:v="using:Sample.App.Views"
+        x:Class="Sample.Client.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Title="Реплікація: клієнт" Width="900" Height="1000">
+  <Grid RowDefinitions="Auto,Auto,*,5,200">
+    <Border Grid.Row="0" Classes="panel">
+      <Grid ColumnDefinitions="Auto,*,Auto,200,Auto" RowDefinitions="Auto,Auto">
+        <TextBlock Grid.Column="0" Text="Власник (URL):" VerticalAlignment="Center" Margin="0,0,8,0" />
+        <TextBox Grid.Column="1" Text="{Binding Url}" PlaceholderText="http://host:5005" />
+        <TextBlock Grid.Column="2" Text="Назва:" VerticalAlignment="Center" Margin="12,0,8,0" />
+        <TextBox Grid.Column="3" Text="{Binding OwnerName}" />
+        <Button Grid.Column="4" Margin="8,0,0,0" Content="Додати власника і почати реплікацію" Command="{Binding AddOwnerCommand}" />
+        <TextBlock Grid.Row="1" Grid.ColumnSpan="5" Margin="0,4,0,0" Text="{Binding Error}" Foreground="IndianRed" />
+      </Grid>
+    </Border>
+    <TextBlock Grid.Row="1" Margin="8,0" Text="{Binding State}" Classes="muted" />
+    <TabControl Grid.Row="2" ItemsSource="{Binding Owners}" SelectedItem="{Binding SelectedOwner}">
+      <TabControl.ItemTemplate>
+        <DataTemplate x:DataType="avm:ClientPanelViewModel">
+          <TextBlock Text="{Binding Title}" />
+        </DataTemplate>
+      </TabControl.ItemTemplate>
+      <TabControl.ContentTemplate>
+        <DataTemplate x:DataType="avm:ClientPanelViewModel">
+          <ScrollViewer><v:ClientPanel DataContext="{Binding}" /></ScrollViewer>
+        </DataTemplate>
+      </TabControl.ContentTemplate>
+    </TabControl>
+    <GridSplitter Grid.Row="3" ResizeDirection="Rows" />
+    <v:LogView Grid.Row="4" DataContext="{Binding Feed}" />
+  </Grid>
+</Window>

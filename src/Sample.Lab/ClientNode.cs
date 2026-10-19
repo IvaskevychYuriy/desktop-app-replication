@@ -12,13 +12,16 @@ namespace Sample.Lab;
 /// </summary>
 public sealed class ClientNode : IAsyncDisposable
 {
-    private ClientNode(string label, string dbPath, ClientReplication replication, SyncAgent agent, SyncLog log)
+    private readonly bool _ownsReplication;
+
+    private ClientNode(string label, string dbPath, ClientReplication replication, SyncAgent agent, SyncLog log, bool ownsReplication)
     {
         Label = label;
         DbPath = dbPath;
         Replication = replication;
         Agent = agent;
         Log = log;
+        _ownsReplication = ownsReplication;
     }
 
     public string Label { get; }
@@ -27,7 +30,8 @@ public sealed class ClientNode : IAsyncDisposable
     public SyncAgent Agent { get; }
     public SyncLog Log { get; }
 
-    public static ClientNode Create(string label, string dbPath, string ownerAddress, SyncLog log, AgentOptions? options = null)
+    /// <summary>Creates the schema and installs the client service tables. Once per database, however many owners connect.</summary>
+    public static ClientReplication Open(string dbPath, SyncLog log)
     {
         SyncModel model;
         using (SampleDbContext db = SampleDbContext.Open(dbPath))
@@ -37,9 +41,21 @@ public sealed class ClientNode : IAsyncDisposable
         }
         var replication = new ClientReplication(dbPath, model, log);
         replication.Install();
+        return replication;
+    }
+
+    /// <summary>Connects an installed <paramref name="replication"/> to one more owner. Disposing the node stops only its agent.</summary>
+    public static ClientNode Connect(ClientReplication replication, SyncLog log, string label, string ownerAddress, AgentOptions? options = null) =>
+        Connect(replication, log, label, ownerAddress, options, ownsReplication: false);
+
+    public static ClientNode Create(string label, string dbPath, string ownerAddress, SyncLog log, AgentOptions? options = null) =>
+        Connect(Open(dbPath, log), log, label, ownerAddress, options, ownsReplication: true);
+
+    private static ClientNode Connect(ClientReplication replication, SyncLog log, string label, string ownerAddress, AgentOptions? options, bool ownsReplication)
+    {
         SyncAgent agent = replication.Connect(ownerAddress, "Власник", options, label);
         agent.SetOpenTables("Item");
-        return new ClientNode(label, dbPath, replication, agent, log);
+        return new ClientNode(label, replication.Store.DbPath, replication, agent, log, ownsReplication);
     }
 
     public bool Link
@@ -180,5 +196,5 @@ public sealed class ClientNode : IAsyncDisposable
         return await Agent.ArchiveAsync(ids);
     }
 
-    public ValueTask DisposeAsync() => Replication.DisposeAsync();
+    public ValueTask DisposeAsync() => _ownsReplication ? Replication.DisposeAsync() : Agent.DisposeAsync();
 }
