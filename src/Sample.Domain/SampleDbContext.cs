@@ -31,10 +31,12 @@ public sealed class SampleDbContext(DbContextOptions<SampleDbContext> options) :
         b.UseReplication(t => typeof(BaseEntity).IsAssignableFrom(t));
     }
 
-    public static SampleDbContext Open(string path, params IInterceptor[] interceptors)
+    public static string ConnectionFor(string path) => $"Data Source={path}";
+
+    public static SampleDbContext Open(string connectionString, params IInterceptor[] interceptors)
     {
         DbContextOptions<SampleDbContext> options = new DbContextOptionsBuilder<SampleDbContext>()
-            .UseSqlite($"Data Source={path};Pooling=True;Default Timeout=30")
+            .UseSqlite(connectionString)
             .AddInterceptors([new StampInterceptor(), .. interceptors])
             .Options;
         return new SampleDbContext(options);

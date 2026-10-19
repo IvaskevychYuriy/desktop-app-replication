@@ -45,11 +45,12 @@ public sealed class ClientStore
     /// <summary>Columns that identify a row for a person reading a note.</summary>
     private static readonly string[] s_labelColumns = ["Name", "Title", "Text"];
 
-    public ClientStore(string dbPath, SyncModel model)
+    public ClientStore(string connectionString, SyncModel model)
     {
-        DbPath = Path.GetFullPath(dbPath);
+        var builder = new SqliteConnectionStringBuilder(connectionString);
+        DbPath = builder.DataSource = Path.GetFullPath(builder.DataSource);
         Model = model;
-        ConnectionString = new SqliteConnectionStringBuilder { DataSource = DbPath, Pooling = true, DefaultTimeout = 30 }.ToString();
+        ConnectionString = builder.ToString();
     }
 
     public string DbPath { get; }

@@ -14,7 +14,7 @@ public partial class ClientApp : Application
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            var vm = new MainWindowViewModel(Program.DbPath);
+            var vm = new MainWindowViewModel(Program.ConnectionString);
             desktop.MainWindow = new MainWindow { DataContext = vm };
             desktop.Exit += (_, _) => vm.DisposeAsync().AsTask().GetAwaiter().GetResult();
         }

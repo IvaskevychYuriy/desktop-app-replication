@@ -20,13 +20,13 @@ public static class OwnerServiceCollectionExtensions
 
     /// <param name="model">Called once, when the store is first resolved.</param>
     /// <param name="configure">Runs before <see cref="OwnerOptions.Log"/> falls back to a registered <see cref="SyncLog"/>.</param>
-    public static IServiceCollection AddReplicationOwner(this IServiceCollection services, string dbPath, Func<SyncModel> model, Action<OwnerOptions>? configure = null)
+    public static IServiceCollection AddReplicationOwner(this IServiceCollection services, string connectionString, Func<SyncModel> model, Action<OwnerOptions>? configure = null)
     {
         services.AddSingleton(sp =>
         {
             var options = new OwnerOptions { Log = sp.GetService<SyncLog>() ?? SyncLog.Null };
             configure?.Invoke(options);
-            return new OwnerStore(dbPath, model(), options);
+            return new OwnerStore(connectionString, model(), options);
         });
         return services.AddReplicationOwnerServices();
     }

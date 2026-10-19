@@ -19,7 +19,7 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0
 WORKDIR /app
 COPY --from=build /app .
 ENV Owner__Headless=true \
-    Owner__DbPath=/data/owner.db \
+    Owner__ConnectionString="Data Source=/data/owner.db" \
     Kestrel__Endpoints__Grpc__Url=http://0.0.0.0:5005
 VOLUME /data
 EXPOSE 5005

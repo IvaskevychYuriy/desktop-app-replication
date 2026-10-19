@@ -37,12 +37,12 @@ public sealed class OwnerNode : IAsyncDisposable
     public string Address => _address();
     public int Port => new Uri(Address).Port;
 
-    public static async Task<OwnerNode> StartAsync(string dbPath, SyncLog log, int port = 0, bool listenAnywhere = false, Action<OwnerOptions>? configure = null)
+    public static async Task<OwnerNode> StartAsync(string connectionString, SyncLog log, int port = 0, bool listenAnywhere = false, Action<OwnerOptions>? configure = null)
     {
-        bool empty = await EnsureCreatedAsync(dbPath);
+        bool empty = await EnsureCreatedAsync(connectionString);
         var options = new OwnerOptions { Log = log };
         configure?.Invoke(options);
-        var store = new OwnerStore(dbPath, ModelOf(dbPath), options);
+        var store = new OwnerStore(connectionString, ModelOf(connectionString), options);
         store.Install();
         OwnerHost host = await OwnerHost.StartAsync(store, port, listenAnywhere);
         var node = new OwnerNode(store, log, () => host.Address, host);
@@ -52,20 +52,20 @@ public sealed class OwnerNode : IAsyncDisposable
     }
 
     /// <returns>True when the database has no data yet.</returns>
-    internal static async Task<bool> EnsureCreatedAsync(string dbPath)
+    internal static async Task<bool> EnsureCreatedAsync(string connectionString)
     {
-        await using SampleDbContext db = SampleDbContext.Open(dbPath);
+        await using SampleDbContext db = SampleDbContext.Open(connectionString);
         await db.Database.EnsureCreatedAsync();
         return !await db.Categories.AnyAsync();
     }
 
-    internal static SyncModel ModelOf(string dbPath)
+    internal static SyncModel ModelOf(string connectionString)
     {
-        using SampleDbContext db = SampleDbContext.Open(dbPath);
+        using SampleDbContext db = SampleDbContext.Open(connectionString);
         return SyncModel.From(db);
     }
 
-    public SampleDbContext Db() => SampleDbContext.Open(DbPath);
+    public SampleDbContext Db() => SampleDbContext.Open(Store.ConnectionString);
 
     private void Say(string text, SyncLogLevel level = SyncLogLevel.Info) => Log.Write("owner", "автоматика: " + text, level);
 

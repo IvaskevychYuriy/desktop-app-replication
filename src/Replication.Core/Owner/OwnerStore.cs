@@ -18,12 +18,13 @@ public sealed class OwnerStore
     private readonly string _floorTables;
     private string _instanceId = "";
 
-    public OwnerStore(string dbPath, SyncModel model, OwnerOptions? options = null)
+    public OwnerStore(string connectionString, SyncModel model, OwnerOptions? options = null)
     {
-        DbPath = Path.GetFullPath(dbPath);
+        var builder = new SqliteConnectionStringBuilder(connectionString);
+        DbPath = builder.DataSource = Path.GetFullPath(builder.DataSource);
         Model = model;
         Options = options ?? new OwnerOptions();
-        ConnectionString = new SqliteConnectionStringBuilder { DataSource = DbPath, Pooling = true, DefaultTimeout = 30 }.ToString();
+        ConnectionString = builder.ToString();
         _floorTables = JsonSerializer.Serialize(model.Tables.Select(t => t.Name));
     }
 

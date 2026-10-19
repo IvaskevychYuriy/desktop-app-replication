@@ -1,5 +1,6 @@
 using Avalonia;
 using Replication;
+using Sample.Domain;
 using Sample.Lab;
 
 namespace Sample.App;
@@ -35,7 +36,7 @@ public static class Program
     {
         var log = new SyncLog();
         log.Written += e => Console.WriteLine($"{e.At:HH:mm:ss.fff} [{e.Source}] {e.Text}");
-        await using OwnerNode owner = await OwnerNode.StartAsync(o.DbPath, log, o.Port, o.ListenAnywhere);
+        await using OwnerNode owner = await OwnerNode.StartAsync(SampleDbContext.ConnectionFor(o.DbPath), log, o.Port, o.ListenAnywhere);
         Console.WriteLine($"Власник працює: {owner.Address} (БД {owner.DbPath}). Ctrl+C для зупинки.");
         var done = new TaskCompletionSource();
         Console.CancelKeyPress += (_, e) =>

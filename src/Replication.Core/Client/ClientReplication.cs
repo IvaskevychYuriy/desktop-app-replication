@@ -11,7 +11,7 @@ namespace Replication.Client;
 /// <code>
 /// // Once, from the shared DbContext.
 /// SyncModel model = SyncModel.From(db);
-/// var replication = new ClientReplication("client.db", model);
+/// var replication = new ClientReplication("Data Source=client.db", model);
 /// // After EnsureCreated / migrations.
 /// replication.Install();
 /// // Edits of remote rows go to the outbox; the router comes after the app's own interceptors.
@@ -25,10 +25,10 @@ public sealed class ClientReplication : IAsyncDisposable
     private readonly List<SyncAgent> _agents = [];
     private readonly SyncLog _log;
 
-    public ClientReplication(string dbPath, SyncModel model, SyncLog? log = null)
+    public ClientReplication(string connectionString, SyncModel model, SyncLog? log = null)
     {
         _log = log ?? SyncLog.Null;
-        Store = new ClientStore(dbPath, model);
+        Store = new ClientStore(connectionString, model);
         Router = new WriteRouter(model);
         Router.OutboxChanged += instance =>
         {

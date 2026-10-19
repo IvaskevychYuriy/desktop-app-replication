@@ -10,8 +10,8 @@ using Sample.Lab;
 namespace Sample.Owner;
 
 /// <summary>
-/// Settings come from appsettings.json, the environment (<c>Owner__DbPath</c>, <c>Kestrel__Endpoints__Grpc__Url</c>) or
-/// the command line (<c>--Owner:DbPath=x.db</c>). <c>Owner:Headless</c> runs without a window.
+/// Settings come from appsettings.json, the environment (<c>Owner__ConnectionString</c>, <c>Kestrel__Endpoints__Grpc__Url</c>) or
+/// the command line (<c>--Owner:ConnectionString="Data Source=x.db"</c>). <c>Owner:Headless</c> runs without a window.
 /// </summary>
 public static class Program
 {
@@ -21,13 +21,13 @@ public static class Program
     public static int Main(string[] args)
     {
         WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
-        string dbPath = builder.Configuration["Owner:DbPath"] ?? "owner.db";
+        string connectionString = builder.Configuration["Owner:ConnectionString"] ?? "Data Source=owner.db";
         bool headless = builder.Configuration.GetValue<bool>("Owner:Headless");
         var log = new SyncLog();
         if (headless)
             log.Written += e => Console.WriteLine($"{e.At:HH:mm:ss.fff} [{e.Source}] {e.Text}");
         builder.Services.AddSingleton(log);
-        builder.Services.AddOwnerNode(dbPath);
+        builder.Services.AddOwnerNode(connectionString);
 
         WebApplication app = builder.Build();
         app.MapReplicationOwner();

@@ -9,11 +9,11 @@ namespace Sample.Lab;
 
 public static class OwnerNodeExtensions
 {
-    /// <summary>The owner for an app that has its own web host: replication services plus <see cref="OwnerNode"/> over <paramref name="dbPath"/>.</summary>
-    public static IServiceCollection AddOwnerNode(this IServiceCollection services, string dbPath, Action<OwnerOptions>? configure = null)
+    /// <summary>The owner for an app that has its own web host: replication services plus <see cref="OwnerNode"/> over <paramref name="connectionString"/>.</summary>
+    public static IServiceCollection AddOwnerNode(this IServiceCollection services, string connectionString, Action<OwnerOptions>? configure = null)
     {
         services.TryAddSingleton<SyncLog>();
-        services.AddReplicationOwner(dbPath, () => OwnerNode.ModelOf(dbPath), configure);
+        services.AddReplicationOwner(connectionString, () => OwnerNode.ModelOf(connectionString), configure);
         services.AddSingleton(sp => new OwnerNode(
             sp.GetRequiredService<OwnerStore>(),
             sp.GetRequiredService<SyncLog>(),
@@ -25,7 +25,7 @@ public static class OwnerNodeExtensions
     public static async Task InitOwnerNodeAsync(this IServiceProvider services)
     {
         OwnerNode node = services.GetRequiredService<OwnerNode>();
-        bool empty = await OwnerNode.EnsureCreatedAsync(node.DbPath);
+        bool empty = await OwnerNode.EnsureCreatedAsync(node.Store.ConnectionString);
         services.InstallReplicationOwner();
         if (empty)
             await node.SeedAsync();

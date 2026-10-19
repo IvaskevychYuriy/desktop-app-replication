@@ -14,10 +14,9 @@ public sealed class ClientNode : IAsyncDisposable
 {
     private readonly bool _ownsReplication;
 
-    private ClientNode(string label, string dbPath, ClientReplication replication, SyncAgent agent, SyncLog log, bool ownsReplication)
+    private ClientNode(string label, ClientReplication replication, SyncAgent agent, SyncLog log, bool ownsReplication)
     {
         Label = label;
-        DbPath = dbPath;
         Replication = replication;
         Agent = agent;
         Log = log;
@@ -25,21 +24,21 @@ public sealed class ClientNode : IAsyncDisposable
     }
 
     public string Label { get; }
-    public string DbPath { get; }
+    public string DbPath => Replication.Store.DbPath;
     public ClientReplication Replication { get; }
     public SyncAgent Agent { get; }
     public SyncLog Log { get; }
 
     /// <summary>Creates the schema and installs the client service tables. Once per database, however many owners connect.</summary>
-    public static ClientReplication Open(string dbPath, SyncLog log)
+    public static ClientReplication Open(string connectionString, SyncLog log)
     {
         SyncModel model;
-        using (SampleDbContext db = SampleDbContext.Open(dbPath))
+        using (SampleDbContext db = SampleDbContext.Open(connectionString))
         {
             db.Database.EnsureCreated();
             model = SyncModel.From(db);
         }
-        var replication = new ClientReplication(dbPath, model, log);
+        var replication = new ClientReplication(connectionString, model, log);
         replication.Install();
         return replication;
     }
@@ -48,14 +47,14 @@ public sealed class ClientNode : IAsyncDisposable
     public static ClientNode Connect(ClientReplication replication, SyncLog log, string label, string ownerAddress, AgentOptions? options = null) =>
         Connect(replication, log, label, ownerAddress, options, ownsReplication: false);
 
-    public static ClientNode Create(string label, string dbPath, string ownerAddress, SyncLog log, AgentOptions? options = null) =>
-        Connect(Open(dbPath, log), log, label, ownerAddress, options, ownsReplication: true);
+    public static ClientNode Create(string label, string connectionString, string ownerAddress, SyncLog log, AgentOptions? options = null) =>
+        Connect(Open(connectionString, log), log, label, ownerAddress, options, ownsReplication: true);
 
     private static ClientNode Connect(ClientReplication replication, SyncLog log, string label, string ownerAddress, AgentOptions? options, bool ownsReplication)
     {
         SyncAgent agent = replication.Connect(ownerAddress, "Власник", options, label);
         agent.SetOpenTables("Item");
-        return new ClientNode(label, replication.Store.DbPath, replication, agent, log, ownsReplication);
+        return new ClientNode(label, replication, agent, log, ownsReplication);
     }
 
     public bool Link
@@ -66,7 +65,7 @@ public sealed class ClientNode : IAsyncDisposable
 
     public string Instance => Agent.InstanceId ?? throw new InvalidOperationException($"{Label}: репліки ще нема");
 
-    public SampleDbContext Db() => SampleDbContext.Open(DbPath, Replication.Interceptors());
+    public SampleDbContext Db() => SampleDbContext.Open(Replication.Store.ConnectionString, Replication.Interceptors());
 
     private void Say(string text) => Log.Write(Label, "користувач: " + text);
 

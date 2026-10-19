@@ -27,10 +27,10 @@ public sealed partial class MainWindowViewModel : ObservableObject, IAsyncDispos
     [ObservableProperty]
     private ClientPanelViewModel? _selectedOwner;
 
-    public MainWindowViewModel(string dbPath)
+    public MainWindowViewModel(string connectionString)
     {
         Feed.Attach(_log);
-        _replication = ClientNode.Open(dbPath, _log);
+        _replication = ClientNode.Open(connectionString, _log);
         State = $"БД {_replication.Store.DbPath}, client_id {_replication.ClientId}";
         new DispatcherTimer(TimeSpan.FromMilliseconds(400), DispatcherPriority.Background, (_, _) => Owners.ToList().ForEach(o => o.Refresh())).Start();
     }

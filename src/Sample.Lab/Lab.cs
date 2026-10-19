@@ -1,6 +1,7 @@
 using Replication;
 using Replication.Client;
 using Replication.Owner;
+using Sample.Domain;
 
 namespace Sample.Lab;
 
@@ -40,14 +41,14 @@ public sealed class Lab : IAsyncDisposable
         dir ??= NewDir();
         Directory.CreateDirectory(dir);
         log ??= new SyncLog();
-        OwnerNode owner = await OwnerNode.StartAsync(Path.Combine(dir, "owner.db"), log, configure: o =>
+        OwnerNode owner = await OwnerNode.StartAsync(SampleDbContext.ConnectionFor(Path.Combine(dir, "owner.db")), log, configure: o =>
         {
             o.OnlineInterval = TimeSpan.FromMilliseconds(300);
             configureOwner?.Invoke(o);
         });
         AgentOptions Opt() => new AgentOptions { AckInterval = TimeSpan.FromMilliseconds(300), ApplyTimeout = TimeSpan.FromSeconds(15), LagWarningWindow = TimeSpan.FromSeconds(6) };
-        ClientNode c1 = ClientNode.Create("Клієнт 1", Path.Combine(dir, "client1.db"), owner.Address, log, Opt());
-        ClientNode c2 = ClientNode.Create("Клієнт 2", Path.Combine(dir, "client2.db"), owner.Address, log, Opt());
+        ClientNode c1 = ClientNode.Create("Клієнт 1", SampleDbContext.ConnectionFor(Path.Combine(dir, "client1.db")), owner.Address, log, Opt());
+        ClientNode c2 = ClientNode.Create("Клієнт 2", SampleDbContext.ConnectionFor(Path.Combine(dir, "client2.db")), owner.Address, log, Opt());
         return new Lab(dir, log, owner, c1, c2);
     }
 
