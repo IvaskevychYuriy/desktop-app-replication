@@ -404,21 +404,21 @@ internal sealed class ClientDb : IAsyncDisposable
     {
         string path = Path.Combine(TestDb.NewDir(), "client.db");
         SyncModel model;
-        using (SampleDbContext db = SampleDbContext.Open(path))
+        using (SampleDbContext db = SampleDbContext.Open(SampleDbContext.ConnectionFor(path)))
         {
             db.Database.EnsureCreated();
             model = SyncModel.From(db);
         }
-        var replication = new ClientReplication(path, model);
+        var replication = new ClientReplication(SampleDbContext.ConnectionFor(path), model);
         replication.Install();
         return new ClientDb(path, replication);
     }
 
     /// <summary>A context with the application's interceptors before the router, as the router asks (8.1).</summary>
-    public SampleDbContext Db(params IInterceptor[] app) => SampleDbContext.Open(DbPath, Replication.Interceptors(app));
+    public SampleDbContext Db(params IInterceptor[] app) => SampleDbContext.Open(SampleDbContext.ConnectionFor(DbPath), Replication.Interceptors(app));
 
     /// <summary>A context with interceptors after the router: they run once the router has begun its write transaction.</summary>
-    public SampleDbContext DbRouterFirst(params IInterceptor[] after) => SampleDbContext.Open(DbPath, [Replication.Router, .. after]);
+    public SampleDbContext DbRouterFirst(params IInterceptor[] after) => SampleDbContext.Open(SampleDbContext.ConnectionFor(DbPath), [Replication.Router, .. after]);
 
     /// <summary>A remote category with one item.</summary>
     public (Guid Category, Guid Item) SeedRemote()
@@ -437,7 +437,7 @@ internal sealed class ClientDb : IAsyncDisposable
     /// <summary>Writes a row past the router, as the agent writes the replica.</summary>
     public Guid Seed(BaseEntity row, string instance = Instance)
     {
-        using SampleDbContext db = SampleDbContext.Open(DbPath);
+        using SampleDbContext db = SampleDbContext.Open(SampleDbContext.ConnectionFor(DbPath));
         db.Add(row).SetInstance(instance);
         db.SaveChanges();
         return row.Id;

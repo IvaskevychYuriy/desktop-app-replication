@@ -86,7 +86,7 @@ public sealed class RecoveryTests
 
         await StopOwnerAsync();
         // The application writes while its sync server is down: the triggers still version every write.
-        await using (Sample.Domain.SampleDbContext db = Sample.Domain.SampleDbContext.Open(OwnerPath))
+        await using (Sample.Domain.SampleDbContext db = Sample.Domain.SampleDbContext.Open(Sample.Domain.SampleDbContext.ConnectionFor(OwnerPath)))
         {
             db.Log.Add(new Sample.Domain.LogEntry { Text = "без сервера синку" });
             await db.SaveChangesAsync();
@@ -160,7 +160,7 @@ public sealed class RecoveryTests
 
     private async Task StartOwnerAsync()
     {
-        _owner = await OwnerNode.StartAsync(OwnerPath, _syncLog, _port, configure: o => o.OnlineInterval = TimeSpan.FromMilliseconds(300));
+        _owner = await OwnerNode.StartAsync(Sample.Domain.SampleDbContext.ConnectionFor(OwnerPath), _syncLog, _port, configure: o => o.OnlineInterval = TimeSpan.FromMilliseconds(300));
         _port = _owner.Port;
     }
 
@@ -180,7 +180,7 @@ public sealed class RecoveryTests
             ReconnectMin = TimeSpan.FromMilliseconds(200),
             ReconnectMax = TimeSpan.FromSeconds(1),
         };
-        _client = ClientNode.Create("клієнт", ClientPath, $"http://127.0.0.1:{_port}", _syncLog, options);
+        _client = ClientNode.Create("клієнт", Sample.Domain.SampleDbContext.ConnectionFor(ClientPath), $"http://127.0.0.1:{_port}", _syncLog, options);
         _client.Link = true;
     }
 

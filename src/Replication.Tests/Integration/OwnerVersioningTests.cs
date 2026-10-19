@@ -33,7 +33,7 @@ public sealed class OwnerVersioningTests
             await db.Database.EnsureCreatedAsync();
             model = SyncModel.From(db);
         }
-        _store = new OwnerStore(_path, model);
+        _store = new OwnerStore(SampleDbContext.ConnectionFor(_path), model);
         _store.Install();
         _office = new Category { Name = "Офіс" };
         _stapler = new Item { Name = "Степлер", Price = 120, Category = _office };
@@ -48,7 +48,7 @@ public sealed class OwnerVersioningTests
     [TearDown]
     public void TearDown() => SqliteConnection.ClearAllPools();
 
-    private SampleDbContext Db() => SampleDbContext.Open(_path);
+    private SampleDbContext Db() => SampleDbContext.Open(SampleDbContext.ConnectionFor(_path));
 
     private long Head() => (long)Rows.Scalar(_path, "SELECT version FROM _sync_meta")!;
 

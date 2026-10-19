@@ -175,7 +175,7 @@ public sealed class SchemaMigrationTests
 
     private async Task StartOwnerAsync(SyncModel model, int schema)
     {
-        _owner = new OwnerStore(_ownerPath, model, new OwnerOptions { SchemaVersion = schema, Log = _syncLog, OnlineInterval = TimeSpan.FromMilliseconds(300) });
+        _owner = new OwnerStore($"Data Source={_ownerPath}", model, new OwnerOptions { SchemaVersion = schema, Log = _syncLog, OnlineInterval = TimeSpan.FromMilliseconds(300) });
         _owner.Install();
         // The same port after a restart: the client keeps the owner's address.
         _host = await OwnerHost.StartAsync(_owner, _port);
@@ -184,7 +184,7 @@ public sealed class SchemaMigrationTests
 
     private void StartClient(SyncModel model, int schema)
     {
-        _client = new ClientReplication(_clientPath, model, _syncLog);
+        _client = new ClientReplication($"Data Source={_clientPath}", model, _syncLog);
         _client.Install();
         var options = new AgentOptions
         {

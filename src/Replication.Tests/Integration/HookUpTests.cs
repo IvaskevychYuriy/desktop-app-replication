@@ -21,7 +21,7 @@ public sealed class HookUpTests
     [Test]
     public void UseReplication_adds_the_service_columns_as_shadow_properties_and_declares_the_triggers()
     {
-        using SampleDbContext db = SampleDbContext.Open(":memory:");
+        using SampleDbContext db = SampleDbContext.Open("Data Source=:memory:");
         foreach (string table in new[] { "Category", "Item", "Log" })
         {
             IEntityType et = db.Model.GetEntityTypes().Single(e => e.GetTableName() == table);
@@ -47,7 +47,7 @@ public sealed class HookUpTests
     [Test]
     public void SyncModel_lists_the_replicated_tables_parents_first_with_data_columns_in_mask_order()
     {
-        using SampleDbContext db = SampleDbContext.Open(":memory:");
+        using SampleDbContext db = SampleDbContext.Open("Data Source=:memory:");
         SyncModel model = SyncModel.From(db);
 
         Assert.That(model.Tables.Select(t => t.Name), Is.EqualTo(new[] { "Category", "Item", "Log" }));
@@ -72,7 +72,7 @@ public sealed class HookUpTests
     {
         string path = Path.Combine(TestDb.NewDir(), "owner.db");
         SyncModel model = CreateDatabase(path);
-        var store = new OwnerStore(path, model);
+        var store = new OwnerStore(SampleDbContext.ConnectionFor(path), model);
 
         store.Install();
 
@@ -99,7 +99,7 @@ public sealed class HookUpTests
     {
         string path = Path.Combine(TestDb.NewDir(), "client.db");
         SyncModel model = CreateDatabase(path);
-        var first = new ClientReplication(path, model);
+        var first = new ClientReplication(SampleDbContext.ConnectionFor(path), model);
 
         first.Install();
 
@@ -109,7 +109,7 @@ public sealed class HookUpTests
         foreach (SyncTable t in model.Tables)
             Assert.That(Rows.Triggers(path, t.Name), Is.Empty);
 
-        var second = new ClientReplication(path, model);
+        var second = new ClientReplication(SampleDbContext.ConnectionFor(path), model);
         second.Install();
         Assert.That(second.ClientId, Is.EqualTo(first.ClientId));
         SqliteConnection.ClearAllPools();
@@ -117,7 +117,7 @@ public sealed class HookUpTests
 
     private static SyncModel CreateDatabase(string path)
     {
-        using SampleDbContext db = SampleDbContext.Open(path);
+        using SampleDbContext db = SampleDbContext.Open(SampleDbContext.ConnectionFor(path));
         db.Database.EnsureCreated();
         return SyncModel.From(db);
     }

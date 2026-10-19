@@ -207,7 +207,7 @@ internal sealed class GraphPair : IAsyncDisposable
             db.Database.EnsureCreated();
             model = SyncModel.From(db);
         }
-        var store = new OwnerStore(ownerPath, model, new OwnerOptions { Log = log, OnlineInterval = TimeSpan.FromMilliseconds(300) });
+        var store = new OwnerStore($"Data Source={ownerPath}", model, new OwnerOptions { Log = log, OnlineInterval = TimeSpan.FromMilliseconds(300) });
         store.Install();
         if (seedOwner is not null)
         {
@@ -220,7 +220,7 @@ internal sealed class GraphPair : IAsyncDisposable
         string clientPath = Path.Combine(dir, "client.db");
         using (GraphDbContext db = GraphDbContext.Open(clientPath))
             db.Database.EnsureCreated();
-        var client = new ClientReplication(clientPath, model, log);
+        var client = new ClientReplication($"Data Source={clientPath}", model, log);
         client.Install();
         var pair = new GraphPair(owner, client, log);
         client.Connect(owner.Address, "Власник", new AgentOptions { AckInterval = TimeSpan.FromMilliseconds(300) }, Label);

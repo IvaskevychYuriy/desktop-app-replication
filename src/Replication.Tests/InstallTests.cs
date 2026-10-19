@@ -35,7 +35,7 @@ public sealed class InstallTests
         string path = Path.Combine(dir, "owner.db");
         SyncModel model;
         // Rows written before sync is enabled: no triggers yet, so SyncVersion stays 0.
-        await using (SampleDbContext db = SampleDbContext.Open(path))
+        await using (SampleDbContext db = SampleDbContext.Open(SampleDbContext.ConnectionFor(path)))
         {
             await db.Database.EnsureCreatedAsync(ct);
             model = SyncModel.From(db);
@@ -48,7 +48,7 @@ public sealed class InstallTests
             await db.SaveChangesAsync(ct);
         }
 
-        var store = new OwnerStore(path, model);
+        var store = new OwnerStore(SampleDbContext.ConnectionFor(path), model);
         store.Install();
 
         // One contiguous run per table, parents first, ending at the head.
@@ -67,7 +67,7 @@ public sealed class InstallTests
         // A second start has nothing to stamp, and the triggers number the next row.
         store.Install();
         Assert.That(Head(store), Is.EqualTo(head));
-        await using (SampleDbContext db = SampleDbContext.Open(path))
+        await using (SampleDbContext db = SampleDbContext.Open(SampleDbContext.ConnectionFor(path)))
         {
             db.Log.Add(new LogEntry { Text = "Після ввімкнення" });
             await db.SaveChangesAsync(ct);
