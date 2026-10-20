@@ -3,7 +3,7 @@ namespace Sample.Domain;
 /// <summary>The application's base entity, unchanged: the sync columns are shadow properties added by the core.</summary>
 public abstract class BaseEntity
 {
-    public Guid Id { get; set; } = Guid.CreateVersion7();
+    public Guid Id { get; set; } = Guid.NewGuid();
     public DateTime CreatedOn { get; set; }
     public DateTime ModifiedOn { get; set; }
 }

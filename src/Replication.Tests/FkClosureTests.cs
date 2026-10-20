@@ -207,15 +207,13 @@ internal sealed class GraphPair : IAsyncDisposable
             db.Database.EnsureCreated();
             model = SyncModel.From(db);
         }
-        var store = new OwnerStore(ownerPath, model, new OwnerOptions { Log = log, OnlineInterval = TimeSpan.FromMilliseconds(300) });
-        store.Install();
+        OwnerHost owner = await OwnerHost.StartAsync(ownerPath, model, new OwnerOptions { Log = log, OnlineInterval = TimeSpan.FromMilliseconds(300) });
         if (seedOwner is not null)
         {
             using GraphDbContext db = GraphDbContext.Open(ownerPath);
             seedOwner(db);
             db.SaveChanges();
         }
-        OwnerHost owner = await OwnerHost.StartAsync(store);
 
         string clientPath = Path.Combine(dir, "client.db");
         using (GraphDbContext db = GraphDbContext.Open(clientPath))

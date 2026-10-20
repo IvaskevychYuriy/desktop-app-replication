@@ -35,19 +35,15 @@ public sealed class OwnerNode : IAsyncDisposable
     public static async Task<OwnerNode> StartAsync(string dbPath, SyncLog log, int port = 0, bool listenAnywhere = false, Action<OwnerOptions>? configure = null)
     {
         SyncModel model;
-        bool empty;
-        await using (SampleDbContext db = SampleDbContext.Open(dbPath))
-        {
-            await db.Database.EnsureCreatedAsync();
+        using (SampleDbContext db = SampleDbContext.Open(dbPath))
             model = SyncModel.From(db);
-            empty = !await db.Categories.AnyAsync();
-        }
         var options = new OwnerOptions { Log = log };
         configure?.Invoke(options);
-        var store = new OwnerStore(dbPath, model, options);
-        store.Install();
-        OwnerHost host = await OwnerHost.StartAsync(store, port, listenAnywhere);
-        var node = new OwnerNode(dbPath, store, host, log);
+        OwnerHost host = await OwnerHost.StartAsync(dbPath, model, options, port, listenAnywhere);
+        bool empty;
+        await using (SampleDbContext db = SampleDbContext.Open(dbPath))
+            empty = !await db.Categories.AnyAsync();
+        var node = new OwnerNode(dbPath, host.Store, host, log);
         if (empty)
             await node.SeedAsync();
         return node;

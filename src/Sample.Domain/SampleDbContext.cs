@@ -33,12 +33,15 @@ public sealed class SampleDbContext(DbContextOptions<SampleDbContext> options) :
 
     public static SampleDbContext Open(string path, params IInterceptor[] interceptors)
     {
-        DbContextOptions<SampleDbContext> options = new DbContextOptionsBuilder<SampleDbContext>()
-            .UseSqlite($"Data Source={path};Pooling=True;Default Timeout=30")
-            .AddInterceptors([new StampInterceptor(), .. interceptors])
-            .Options;
-        return new SampleDbContext(options);
+        var options = new DbContextOptionsBuilder<SampleDbContext>();
+        Configure(options, path, interceptors);
+        return new SampleDbContext(options.Options);
     }
+
+    internal static void Configure(DbContextOptionsBuilder options, string path, params IInterceptor[] interceptors) =>
+        options
+            .UseSqlite($"Data Source={path};Pooling=True;Default Timeout=30")
+            .AddInterceptors([new StampInterceptor(), .. interceptors]);
 }
 
 /// <summary>Sets CreatedOn / ModifiedOn, as an application usually does.</summary>
