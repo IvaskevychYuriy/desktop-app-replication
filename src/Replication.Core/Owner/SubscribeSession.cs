@@ -26,6 +26,7 @@ internal sealed class SubscribeSession
     private string _clientId = "";
     private string _who = "";
     private bool _online;
+    private bool _adopt;
     private long _sentUpTo;
     private long _catchupHead;
 
@@ -64,6 +65,12 @@ internal sealed class SubscribeSession
         try
         {
             Log($"Start прийнято, голова {head}; курсори {string.Join(", ", _mirror.Select(x => $"{x.Key}={x.Value}"))}", SyncLogLevel.Ok);
+            if (_adopt)
+            {
+                Log("репліки нема, skip_snapshot → Accepted, дані прийдуть потоком", SyncLogLevel.Ok);
+                await SendAsync(new ChangeMessage { Accepted = new Accepted { InstanceId = _store.InstanceId } }, _ct);
+            }
+
             _store.Committed += _wake.Set;
             reader = Task.Run(() => ReadLoopAsync(stop.Token));
             main = MainLoopAsync(conn, stop.Token);
@@ -96,7 +103,9 @@ internal sealed class SubscribeSession
             return null;
         }
 
-        Dictionary<string, CursorState> cursors = start.Cursors.ToDictionary(c => c.Tbl, CursorState.FromWire);
+        // A client without a replica that asked for catch-up instead of a snapshot starts from zero cursors, whatever it sent.
+        _adopt = start.SkipSnapshot && string.IsNullOrEmpty(start.InstanceId);
+        Dictionary<string, CursorState> cursors = _adopt ? [] : start.Cursors.ToDictionary(c => c.Tbl, CursorState.FromWire);
         List<(string Name, CursorState K)> states = Model.Tables.Select(t => (t.Name, K: cursors.GetValueOrDefault(t.Name) ?? new CursorState(0))).ToList();
         long head;
         string? reason = null;
@@ -110,7 +119,9 @@ internal sealed class SubscribeSession
             // A table that is still empty (cursor 0, no ranges) has no rows whose deletion it could miss, so forgotten
             // tombstones do not matter for it; this lets an empty replica (6.3) start after a purge (6.2).
             (string Name, CursorState K) behind = states.FirstOrDefault(x => !(x.K.Cursor == 0 && x.K.Ranges.Count == 0) && x.K.Cursor < purged);
-            if (string.IsNullOrEmpty(start.InstanceId))
+            if (_adopt)
+                reason = null;
+            else if (string.IsNullOrEmpty(start.InstanceId))
                 reason = "репліки нема";
             else if (start.InstanceId != _store.InstanceId)
                 reason = "інший instance_id";
@@ -424,7 +435,7 @@ internal sealed class SubscribeSession
 
     private async Task SendAsync(ChangeMessage m, CancellationToken ct)
     {
-        if (_extra.Count > 0 && m.BodyCase is not (ChangeMessage.BodyOneofCase.SnapshotRequired or ChangeMessage.BodyOneofCase.SchemaMismatch))
+        if (_extra.Count > 0 && m.BodyCase is not (ChangeMessage.BodyOneofCase.SnapshotRequired or ChangeMessage.BodyOneofCase.SchemaMismatch or ChangeMessage.BodyOneofCase.Accepted))
         {
             m.Extra.AddRange(_extra);
             _extra.Clear();

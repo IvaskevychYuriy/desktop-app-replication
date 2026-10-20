@@ -40,6 +40,9 @@ message Start {
   string instance_id = 3;           // empty when the client has no replica yet
   repeated TableCursor cursors = 4;
   repeated string open_tables = 5;
+  // With an empty instance_id: skip the snapshot, the owner accepts the client with zero cursors and answers Accepted.
+  // Any other reason for a snapshot (different instance, cursor behind purged_version or ahead of head) still gets SnapshotRequired.
+  bool skip_snapshot = 6;
 }
 
 // Cursor C plus received ranges (lo, hi] above C. Ranges are delta-encoded:
@@ -75,6 +78,7 @@ message ChangeMessage {
     Progress progress = 5;
     SnapshotRequired snapshot_required = 6;
     SchemaMismatch schema_mismatch = 7;
+    Accepted accepted = 8;
   }
 }
 
@@ -126,6 +130,11 @@ message SnapshotRequired {
   string reason = 1;
   int64 size_bytes = 2;
   string instance_id = 3;
+}
+
+// First message after a Start with skip_snapshot and an empty instance_id: the client takes this instance with zero cursors.
+message Accepted {
+  string instance_id = 1;
 }
 
 message SchemaMismatch {

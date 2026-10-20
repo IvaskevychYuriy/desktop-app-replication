@@ -374,6 +374,31 @@ public static class Scenarios
                 return Task.CompletedTask;
             }),
 
+        new Scenario("skip", "Новий клієнт: без знімка",
+            "Клієнт без репліки просить досинхронізацію замість знімка. Власник приймає його з нульовими курсорами, сам повідомляє свій instance_id, і дані йдуть потоком від нових до старих.",
+            async l =>
+            {
+                l.Owner.Store.Options.CatchupBatchRows = 3;
+                await l.SyncNowAsync(l.C1);
+            },
+            [
+                new ScenarioStep("Увімкнути зв'язок Клієнта 2 з прапорцем skip_snapshot", "Репліки нема, але в Start стоїть skip_snapshot, тому власник не рахує розмір знімка. Він приймає клієнта з нульовими курсорами, реєструє його і першим повідомленням Accepted віддає свій instance_id. Клієнт запам'ятовує його з нульовими курсорами, і далі йде звичайна досинхронізація пачками по 3 рядки. Знімок не створюється і не завантажується.",
+                    l =>
+                    {
+                        l.C2.Agent.Options.SkipSnapshot = true;
+                        l.C2.Link = true;
+                        return Task.CompletedTask;
+                    }),
+                new ScenarioStep("Змінити «Степлер» на власнику", "Після досинхронізації клієнт онлайн, і зміна приходить тим самим потоком, без нового Start.",
+                    l => l.Owner.SetPriceAsync("Степлер", 175)),
+            ],
+            l =>
+            {
+                Check(l.C2.Agent.InstanceId == l.Owner.Store.InstanceId, "Клієнт 2 не взяв instance_id власника");
+                Check(Inspect.ClientHas(l.C2, "Степлер"), "у Клієнта 2 нема «Степлера»");
+                return Task.CompletedTask;
+            }),
+
         new Scenario("archive", "Перенесення в архів",
             "Користувач забирає частину даних собі й звільняє місце на власнику. Рядки в БД клієнта спершу отримують InstanceId = X:archive, синк їх більше не чіпає, і тільки потім власнику йде умовне видалення.",
             async l =>

@@ -44,6 +44,9 @@ public sealed class AgentOptions
 
     public SnapshotMode SnapshotMode { get; set; } = SnapshotMode.Auto;
 
+    /// <summary>A client without a replica asks the owner for catch-up from zero cursors instead of a snapshot. The owner may still answer SnapshotRequired.</summary>
+    public bool SkipSnapshot { get; set; }
+
     /// <summary>File if size / measured speed is under this, otherwise an empty replica filled by the stream (6.3).</summary>
     public TimeSpan SnapshotFileThreshold { get; set; } = TimeSpan.FromMinutes(5);
     public double AssumedDownBytesPerSecond { get; set; } = 250_000;
@@ -373,10 +376,18 @@ public sealed class SyncAgent : IAsyncDisposable
                 continue;
             }
 
+            bool accepted = first.BodyCase == ChangeMessage.BodyOneofCase.Accepted;
+            if (accepted)
+            {
+                Log($"← Accepted: instance_id {first.Accepted.InstanceId}, репліка порожня, дані прийдуть потоком");
+                await StartEmptyReplicaAsync(first.Accepted.InstanceId);
+            }
+
             SetState(AgentState.Catchup);
             Log("Start прийнято: потік пішов, Apply паралельно", SyncLogLevel.Ok);
             _write = Write;
-            await HandleAsync(first);
+            if (!accepted)
+                await HandleAsync(first);
             using CancellationTokenSource inner = CancellationTokenSource.CreateLinkedTokenSource(ct);
             Task[] tasks = new[]
             {
@@ -394,7 +405,7 @@ public sealed class SyncAgent : IAsyncDisposable
 
     private Start BuildStart()
     {
-        var s = new Start { ClientId = _store.ClientId, SchemaVersion = Options.SchemaVersion, InstanceId = _instance ?? "" };
+        var s = new Start { ClientId = _store.ClientId, SchemaVersion = Options.SchemaVersion, InstanceId = _instance ?? "", SkipSnapshot = Options.SkipSnapshot && _instance is null };
         if (_instance is not null)
         {
             lock (_cursorsLock)
@@ -760,32 +771,7 @@ public sealed class SyncAgent : IAsyncDisposable
 
         if (mode == SnapshotMode.EmptyReplica)
         {
-            bool hadReplica = _instance is not null;
-            await _gate.WaitAsync(ct);
-            try
-            {
-                using SqliteTransaction tx = _conn.BeginTransaction();
-                foreach (SyncTable t in _store.Model.Tables)
-                {
-                    if (_instance is not null)
-                        _conn.Exec($"DELETE FROM {Q(t.Name)} WHERE InstanceId = @i", tx, ("@i", _instance));
-                    ClientStore.SaveCursor(_conn, tx, sr.InstanceId, t.Name, new CursorState(0));
-                }
-                _conn.Exec("UPDATE _sync_instances SET instance = @i WHERE address = @a", tx, ("@i", sr.InstanceId), ("@a", Address));
-                tx.Commit();
-                _instance = sr.InstanceId;
-                lock (_cursorsLock)
-                    _cursors = NewCursors();
-            }
-            finally
-            {
-                _gate.Release();
-            }
-            if (hadReplica)
-            {
-                DataChanged?.Invoke(_store.Model.Tables.Select(t => t.Name).ToList());
-                StatusChanged?.Invoke();
-            }
+            await StartEmptyReplicaAsync(sr.InstanceId, ct);
             return;
         }
 
@@ -816,6 +802,37 @@ public sealed class SyncAgent : IAsyncDisposable
         _snapshotProgress = null;
         DataChanged?.Invoke(_store.Model.Tables.Select(t => t.Name).ToList());
         StatusChanged?.Invoke();
+    }
+
+    /// <summary>Takes the owner's instance with zero cursors: the data then arrives by catch-up, newest first (6.3).</summary>
+    private async Task StartEmptyReplicaAsync(string instance, CancellationToken ct = default)
+    {
+        bool hadReplica = _instance is not null;
+        await _gate.WaitAsync(ct);
+        try
+        {
+            using SqliteTransaction tx = _conn.BeginTransaction();
+            foreach (SyncTable t in _store.Model.Tables)
+            {
+                if (_instance is not null)
+                    _conn.Exec($"DELETE FROM {Q(t.Name)} WHERE InstanceId = @i", tx, ("@i", _instance));
+                ClientStore.SaveCursor(_conn, tx, instance, t.Name, new CursorState(0));
+            }
+            _conn.Exec("UPDATE _sync_instances SET instance = @i WHERE address = @a", tx, ("@i", instance), ("@a", Address));
+            tx.Commit();
+            _instance = instance;
+            lock (_cursorsLock)
+                _cursors = NewCursors();
+        }
+        finally
+        {
+            _gate.Release();
+        }
+        if (hadReplica)
+        {
+            DataChanged?.Invoke(_store.Model.Tables.Select(t => t.Name).ToList());
+            StatusChanged?.Invoke();
+        }
     }
 
     private bool HasSendable()
