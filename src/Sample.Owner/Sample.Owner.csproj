@@ -2,21 +2,10 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <AssemblyName>ReplicationOwner</AssemblyName>
-    <Description>Standalone owner app: Kestrel gRPC replication server with an optional Avalonia window; headless in a container.</Description>
-    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
-    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+    <Description>Standalone owner app: console process running a Kestrel gRPC replication server.</Description>
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Avalonia" />
-    <PackageReference Include="Avalonia.Desktop" />
-    <PackageReference Include="Avalonia.Themes.Fluent" />
-    <PackageReference Include="Avalonia.Fonts.Inter" />
-    <PackageReference Include="Avalonia.Controls.DataGrid" />
-    <PackageReference Include="CommunityToolkit.Mvvm" />
-  </ItemGroup>
-  <ItemGroup>
-    <ProjectReference Include="..\Sample.Lab\Sample.Lab.csproj" />
-    <ProjectReference Include="..\Sample.App\Sample.App.csproj" />
+    <ProjectReference Include="..\Sample.Domain\Sample.Domain.csproj" />
   </ItemGroup>
 </Project>
