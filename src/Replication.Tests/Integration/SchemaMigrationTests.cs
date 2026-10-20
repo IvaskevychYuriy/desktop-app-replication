@@ -144,7 +144,7 @@ public sealed class SchemaMigrationTests
         }
         await ClientEditAsync(2, lamp.Id, p => p.Discount = 5);
         var hit = new Tag { Label = "хіт", ProductId = cable.Id };
-        await using (ShopDbContext db = ShopDbContext.Open(_clientPath, 2, _client!.Interceptors()))
+        await using (ShopDbContext db = ShopDbContext.Open(_clientPath, 2, _client!.Router))
         {
             db.Tags().Add(hit).SetInstance(Instance);
             await db.SaveChangesAsync();
@@ -184,8 +184,7 @@ public sealed class SchemaMigrationTests
 
     private void StartClient(SyncModel model, int schema)
     {
-        _client = new ClientReplication(_clientPath, model, _syncLog);
-        _client.Install();
+        _client = new ClientReplication(ClientReplication.BuildServices(_clientPath, model).InstallClientStore(), _syncLog);
         var options = new AgentOptions
         {
             SchemaVersion = schema,
@@ -221,7 +220,7 @@ public sealed class SchemaMigrationTests
 
     private async Task ClientEditAsync(int schema, Guid id, Action<Product> change)
     {
-        await using ShopDbContext db = ShopDbContext.Open(_clientPath, schema, _client!.Interceptors());
+        await using ShopDbContext db = ShopDbContext.Open(_clientPath, schema, _client!.Router);
         change(await db.Products.SingleAsync(x => x.Id == id && EF.Property<string>(x, SyncColumns.InstanceId) == Instance));
         await db.SaveChangesAsync();
     }

@@ -218,8 +218,7 @@ internal sealed class GraphPair : IAsyncDisposable
         string clientPath = Path.Combine(dir, "client.db");
         using (GraphDbContext db = GraphDbContext.Open(clientPath))
             db.Database.EnsureCreated();
-        var client = new ClientReplication(clientPath, model, log);
-        client.Install();
+        var client = new ClientReplication(ClientReplication.BuildServices(clientPath, model).InstallClientStore(), log);
         var pair = new GraphPair(owner, client, log);
         client.Connect(owner.Address, "Власник", new AgentOptions { AckInterval = TimeSpan.FromMilliseconds(300) }, Label);
         await pair.SyncAsync();
@@ -236,7 +235,7 @@ internal sealed class GraphPair : IAsyncDisposable
         owner.SaveChanges();
     }
 
-    public GraphDbContext ClientDb() => GraphDbContext.Open(Client.Store.DbPath, Client.Interceptors());
+    public GraphDbContext ClientDb() => GraphDbContext.Open(Client.Store.DbPath, Client.Router);
 
     public GraphDbContext OwnerDb() => GraphDbContext.Open(Owner.Store.DbPath);
 

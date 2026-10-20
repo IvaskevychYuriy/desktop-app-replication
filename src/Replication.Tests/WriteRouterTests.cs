@@ -8,6 +8,7 @@ using NUnit.Framework;
 using Replication.Client;
 using Replication.Model;
 using Sample.Domain;
+using Sample.Lab;
 
 namespace Replication.Tests;
 
@@ -409,13 +410,12 @@ internal sealed class ClientDb : IAsyncDisposable
             db.Database.EnsureCreated();
             model = SyncModel.From(db);
         }
-        var replication = new ClientReplication(path, model);
-        replication.Install();
+        var replication = new ClientReplication(ClientReplication.BuildServices(path, model).InstallClientStore());
         return new ClientDb(path, replication);
     }
 
     /// <summary>A context with the application's interceptors before the router, as the router asks (8.1).</summary>
-    public SampleDbContext Db(params IInterceptor[] app) => SampleDbContext.Open(DbPath, Replication.Interceptors(app));
+    public SampleDbContext Db(params IInterceptor[] app) => SampleDbContext.Open(DbPath, [.. app, Replication.Router]);
 
     /// <summary>A context with interceptors after the router: they run once the router has begun its write transaction.</summary>
     public SampleDbContext DbRouterFirst(params IInterceptor[] after) => SampleDbContext.Open(DbPath, [Replication.Router, .. after]);

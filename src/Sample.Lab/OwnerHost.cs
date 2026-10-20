@@ -49,8 +49,7 @@ public sealed class OwnerHost : IAsyncDisposable
             .AddSyncKestrelLimits();
         WebApplication app = builder.Build();
         app.MapSyncGrpcService();
-        app.MigrateSampleDb();
-        app.InstallOwnerStore();
+        app.Services.MigrateSampleDb().InstallOwnerStore();
         await app.StartAsync();
         OwnerStore store = app.Services.GetRequiredService<OwnerStore>();
         int actualPort = BindingAddress.Parse(app.Urls.First()).Port;

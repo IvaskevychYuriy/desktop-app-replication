@@ -4,7 +4,6 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Replication.Model;
 
 namespace Replication.Owner;
@@ -60,9 +59,9 @@ public static class OwnerHostingExtensions
     }
 
     /// <summary>Call after the application's own migrations and before the host starts.</summary>
-    public static IHost InstallOwnerStore(this IHost host)
+    public static IServiceProvider InstallOwnerStore(this IServiceProvider services)
     {
-        host.Services.GetRequiredService<OwnerStore>().Install();
-        return host;
+        services.GetRequiredService<OwnerStore>().Install();
+        return services;
     }
 }

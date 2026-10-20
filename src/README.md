@@ -67,23 +67,29 @@ dotnet tool restore && dotnet slopwatch analyze -d .. --fail-on warning
 3. Власник, після міграцій:
 
    ```csharp
-   var store = new OwnerStore("owner.db", SyncModel.From(db));
-   store.Install();                                   // службові таблиці, тригери, файл версії
-   var host = await OwnerHost.StartAsync(store, 5005, listenAnywhere: true);
+   services.AddOwnerServices("owner.db", SyncModel.From(db), new OwnerOptions { Log = log });
+   services.AddSyncGrpcService();
+   services.AddSyncKestrelLimits();
+   app.MapSyncGrpcService();
+   // ... міграції застосунку
+   app.Services.InstallOwnerStore();                         // службові таблиці, тригери, файл версії
+   await app.StartAsync();                            // адреса, порт і TLS за застосунком, див. Sample.Lab/OwnerHost.cs
    ```
 
    Автоматика пише як завжди: SaveChanges, ExecuteUpdate, ExecuteDelete, сирий SQL. Усе ловлять тригери.
 4. Клієнт, після міграцій:
 
    ```csharp
-   var replication = new ClientReplication("client.db", SyncModel.From(db));
-   replication.Install();
-   options.AddInterceptors(replication.Interceptors(validation)); // у DbContextOptions клієнта, роутер останнім
-   var agent = replication.Connect("http://10.0.0.5:5005", "Склад");
+   services.AddClientServices("client.db", SyncModel.From(db));   // ClientStore і WriteRouter, один раз на клієнта
+   options.AddInterceptors(validation, router);                   // у DbContextOptions клієнта, WriteRouter з DI останнім
+   // ... міграції застосунку
+   services.InstallClientStore();
+   var agent = new SyncAgent(store, "http://10.0.0.5:5005", "Склад"); // по одному на власника
+   agent.Start();
    agent.LinkEnabled = true;
    ```
 
-   `replication.Interceptors(...)` ставить роутер після власних перехоплювачів застосунку (тут `validation`). EF не повідомляє жодному перехоплювачу, що наступний за ним кинув виняток у `SavingChanges`, тож перехоплювач після роутера, який відхилив збереження, лишив би транзакцію роутера, а з нею блокування запису клієнтської БД, до наступного збереження на цьому контексті.
+   Роутер стоїть після власних перехоплювачів застосунку (тут `validation`). EF не повідомляє жодному перехоплювачу, що наступний за ним кинув виняток у `SavingChanges`, тож перехоплювач після роутера, який відхилив збереження, лишив би транзакцію роутера, а з нею блокування запису клієнтської БД, до наступного збереження на цьому контексті.
 
    Нові записи отримують інстанс через `db.Items.Add(item).SetInstance(agent.InstanceId!)`. Читання це звичайні запити з фільтром `EF.Property<string>(x, "InstanceId")`. Масове видалення за умовою: `agent.DeleteWhereAsync("Item", new Predicate("Status", "архів"))`, перенесення в архів: `agent.ArchiveAsync(...)`.
 

@@ -6,6 +6,7 @@ using Replication.Client;
 using Replication.Model;
 using Replication.Owner;
 using Sample.Domain;
+using Sample.Lab;
 
 namespace Replication.Tests.Integration;
 
@@ -99,9 +100,7 @@ public sealed class HookUpTests
     {
         string path = Path.Combine(TestDb.NewDir(), "client.db");
         SyncModel model = CreateDatabase(path);
-        var first = new ClientReplication(path, model);
-
-        first.Install();
+        var first = new ClientReplication(ClientReplication.BuildServices(path, model).InstallClientStore());
 
         Assert.That(first.ClientId, Does.StartWith("cl-"));
         Assert.That(Tables(path), Is.SupersetOf(new[] { "_sync_local", "_sync_instances", "_sync_cursors", "_sync_ranges", "_sync_outbox", "_sync_notes" }));
@@ -109,8 +108,7 @@ public sealed class HookUpTests
         foreach (SyncTable t in model.Tables)
             Assert.That(Rows.Triggers(path, t.Name), Is.Empty);
 
-        var second = new ClientReplication(path, model);
-        second.Install();
+        var second = new ClientReplication(ClientReplication.BuildServices(path, model).InstallClientStore());
         Assert.That(second.ClientId, Is.EqualTo(first.ClientId));
         SqliteConnection.ClearAllPools();
     }
