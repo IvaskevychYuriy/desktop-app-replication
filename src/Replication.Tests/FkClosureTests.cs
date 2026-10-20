@@ -104,7 +104,7 @@ public sealed class FkClosureTests
 
 public sealed class Node
 {
-    public Guid Id { get; set; } = Guid.CreateVersion7();
+    public Guid Id { get; set; } = Guid.NewGuid();
     public string Name { get; set; } = "";
     public Guid? ParentId { get; set; }
     public Node? Parent { get; set; }
@@ -112,7 +112,7 @@ public sealed class Node
 
 public sealed class Dept
 {
-    public Guid Id { get; set; } = Guid.CreateVersion7();
+    public Guid Id { get; set; } = Guid.NewGuid();
     public string Name { get; set; } = "";
     public Guid? ManagerId { get; set; }
     public Emp? Manager { get; set; }
@@ -120,7 +120,7 @@ public sealed class Dept
 
 public sealed class Emp
 {
-    public Guid Id { get; set; } = Guid.CreateVersion7();
+    public Guid Id { get; set; } = Guid.NewGuid();
     public string Name { get; set; } = "";
     public Guid? DeptId { get; set; }
     public Dept? Dept { get; set; }
