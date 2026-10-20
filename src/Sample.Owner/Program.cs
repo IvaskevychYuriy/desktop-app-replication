@@ -1,10 +1,12 @@
 using Avalonia;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Replication;
 using Replication.Owner;
+using Sample.Domain;
 using Sample.Lab;
 
 namespace Sample.Owner;
@@ -28,6 +30,8 @@ public static class Program
             log.Written += e => Console.WriteLine($"{e.At:HH:mm:ss.fff} [{e.Source}] {e.Text}");
         builder.Services.AddSingleton(log);
         builder.Services.AddOwnerNode(connectionString);
+        builder.Services.AddDbContextFactory<SampleDbContext>(o => o.UseSqlite(connectionString).AddInterceptors(new StampInterceptor()));
+        builder.Services.AddHostedService<DataGenerator>();
 
         WebApplication app = builder.Build();
         app.MapReplicationOwner();

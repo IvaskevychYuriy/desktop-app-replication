@@ -39,24 +39,19 @@ public sealed class OwnerNode : IAsyncDisposable
 
     public static async Task<OwnerNode> StartAsync(string connectionString, SyncLog log, int port = 0, bool listenAnywhere = false, Action<OwnerOptions>? configure = null)
     {
-        bool empty = await EnsureCreatedAsync(connectionString);
+        await EnsureCreatedAsync(connectionString);
         var options = new OwnerOptions { Log = log };
         configure?.Invoke(options);
         var store = new OwnerStore(connectionString, ModelOf(connectionString), options);
         store.Install();
         OwnerHost host = await OwnerHost.StartAsync(store, port, listenAnywhere);
-        var node = new OwnerNode(store, log, () => host.Address, host);
-        if (empty)
-            await node.SeedAsync();
-        return node;
+        return new OwnerNode(store, log, () => host.Address, host);
     }
 
-    /// <returns>True when the database has no data yet.</returns>
-    internal static async Task<bool> EnsureCreatedAsync(string connectionString)
+    internal static async Task EnsureCreatedAsync(string connectionString)
     {
         await using SampleDbContext db = SampleDbContext.Open(connectionString);
         await db.Database.EnsureCreatedAsync();
-        return !await db.Categories.AnyAsync();
     }
 
     internal static SyncModel ModelOf(string connectionString)
@@ -74,27 +69,6 @@ public sealed class OwnerNode : IAsyncDisposable
     private long RandomPrice(int steps = 99) => 10 + _rnd.Next(steps) * 10;
 
     private LogEntry NextLogEntry() => new() { Text = $"Автоматика: перерахунок залишків #{++_logN}" };
-
-    internal async Task SeedAsync()
-    {
-        await using SampleDbContext db = Db();
-        Dictionary<string, Category> cats = new[] { "Офіс", "Склад", "Архів" }.ToDictionary(n => n, n => new Category { Name = n });
-        db.Categories.AddRange(cats.Values);
-        foreach ((string n, long p, string s, string c) in new[]
-                 {
-                     ("Степлер", 120L, "активний", "Офіс"), ("Папір A4", 240L, "активний", "Офіс"), ("Маркери", 85L, "новий", "Офіс"),
-                     ("Палета", 450L, "активний", "Склад"), ("Стрейч-плівка", 310L, "активний", "Склад"), ("Скотч", 40L, "новий", "Склад"),
-                     ("Старий принтер", 900L, "архів", "Архів"), ("Факс", 300L, "архів", "Архів"), ("Каталог 2019", 15L, "архів", "Офіс"),
-                 })
-        {
-            db.Items.Add(new Item { Name = n, Price = p, Status = s, Category = cats[c] });
-        }
-
-        for (int i = 0; i < 3; i++)
-            db.Log.Add(NextLogEntry());
-        await db.SaveChangesAsync();
-        Say($"початкові дані: 3 категорії, 9 товарів, 3 записи журналу; голова {Head()}");
-    }
 
     public long Head()
     {

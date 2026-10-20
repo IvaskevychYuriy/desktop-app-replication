@@ -21,13 +21,11 @@ public static class OwnerNodeExtensions
         return services;
     }
 
-    /// <summary>Creates the schema, installs replication and seeds an empty database. Call before the host starts.</summary>
+    /// <summary>Creates the schema and installs replication. Call before the host starts.</summary>
     public static async Task InitOwnerNodeAsync(this IServiceProvider services)
     {
         OwnerNode node = services.GetRequiredService<OwnerNode>();
-        bool empty = await OwnerNode.EnsureCreatedAsync(node.Store.ConnectionString);
+        await OwnerNode.EnsureCreatedAsync(node.Store.ConnectionString);
         services.InstallReplicationOwner();
-        if (empty)
-            await node.SeedAsync();
     }
 }
