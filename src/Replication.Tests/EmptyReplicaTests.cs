@@ -27,6 +27,42 @@ public sealed class EmptyReplicaTests
     }
 
     [Test]
+    public async Task Skip_snapshot_without_a_replica_fills_from_the_stream_without_SnapshotRequired()
+    {
+        await using Lab lab = await Lab.StartAsync(configureOwner: o => o.CatchupBatchRows = 4);
+
+        lab.C2.Agent.Options.SkipSnapshot = true;
+        await lab.SyncNowAsync(lab.C2);
+        await lab.SettleAsync();
+
+        Assert.That(lab.C2.Instance, Is.EqualTo(lab.Owner.Store.InstanceId));
+        Assert.That(Inspect.Diff(lab.Owner, lab.C2), Is.Empty);
+    }
+
+    [Test]
+    public async Task Skip_snapshot_is_ignored_when_the_replica_cannot_be_caught_up()
+    {
+        await using Lab lab = await Lab.StartAsync();
+        await lab.SyncNowAsync(lab.C2);
+        await lab.SettleAsync();
+        await lab.GoOfflineAsync(lab.C2);
+
+        await using (SampleDbContext db = lab.Owner.Db())
+            await db.Log.ExecuteDeleteAsync(TestContext.CurrentContext.CancellationToken);
+        await lab.SettleAsync();
+        lab.Owner.AdvanceClock(TimeSpan.FromDays(31));
+        OwnerStore.PurgeResult purged = await lab.Owner.PurgeAsync();
+        Assert.That(purged.PurgedVersion > lab.C2.Agent.CursorOf("Log").Cursor, Is.True);
+
+        // The client has a replica, so the flag does not apply: the cursor is behind purged_version and the snapshot is taken.
+        lab.C2.Agent.Options.SkipSnapshot = true;
+        await lab.SyncNowAsync(lab.C2);
+        await lab.SettleAsync();
+
+        Assert.That(Inspect.Diff(lab.Owner, lab.C2), Is.Empty);
+    }
+
+    [Test]
     public async Task Empty_replica_over_an_existing_one_reports_every_table_changed()
     {
         await using Lab lab = await Lab.StartAsync();

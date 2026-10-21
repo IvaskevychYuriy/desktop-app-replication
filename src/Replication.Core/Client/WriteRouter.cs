@@ -15,7 +15,7 @@ namespace Replication.Client;
 /// the replica and, in the same transaction, to the outbox of X. Rows of <c>local</c> and archives are not touched.
 /// </summary>
 /// <remarks>
-/// Register it after every other SaveChanges interceptor (<see cref="ClientReplication.Interceptors"/>). EF tells no
+/// Register it after every other SaveChanges interceptor (after the application's own). EF tells no
 /// interceptor when one throws in SavingChanges, so an interceptor after the router that rejects the save would leave
 /// the router's write transaction, and with it the write lock on the client database, open until the next save on that context.
 /// </remarks>

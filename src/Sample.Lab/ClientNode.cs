@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Replication;
 using Replication.Client;
 using Replication.Model;
@@ -31,12 +32,10 @@ public sealed class ClientNode : IAsyncDisposable
     {
         SyncModel model;
         using (SampleDbContext db = SampleDbContext.Open(dbPath))
-        {
-            db.Database.EnsureCreated();
             model = SyncModel.From(db);
-        }
-        var replication = new ClientReplication(dbPath, model, log);
-        replication.Install();
+        ServiceProvider services = ClientReplication.BuildServices(dbPath, model, s => s.AddSampleDb(dbPath, sp => [sp.GetRequiredService<WriteRouter>()]));
+        services.MigrateSampleDb().InstallClientStore();
+        var replication = new ClientReplication(services, log);
         SyncAgent agent = replication.Connect(ownerAddress, "Власник", options, label);
         agent.SetOpenTables("Item");
         return new ClientNode(label, dbPath, replication, agent, log);
@@ -50,7 +49,7 @@ public sealed class ClientNode : IAsyncDisposable
 
     public string Instance => Agent.InstanceId ?? throw new InvalidOperationException($"{Label}: репліки ще нема");
 
-    public SampleDbContext Db() => SampleDbContext.Open(DbPath, Replication.Interceptors());
+    public SampleDbContext Db() => Replication.Services.GetRequiredService<IDbContextFactory<SampleDbContext>>().CreateDbContext();
 
     private void Say(string text) => Log.Write(Label, "користувач: " + text);
 

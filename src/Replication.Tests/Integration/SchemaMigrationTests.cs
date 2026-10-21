@@ -144,7 +144,7 @@ public sealed class SchemaMigrationTests
         }
         await ClientEditAsync(2, lamp.Id, p => p.Discount = 5);
         var hit = new Tag { Label = "хіт", ProductId = cable.Id };
-        await using (ShopDbContext db = ShopDbContext.Open(_clientPath, 2, _client!.Interceptors()))
+        await using (ShopDbContext db = ShopDbContext.Open(_clientPath, 2, _client!.Router))
         {
             db.Tags().Add(hit).SetInstance(Instance);
             await db.SaveChangesAsync();
@@ -175,17 +175,16 @@ public sealed class SchemaMigrationTests
 
     private async Task StartOwnerAsync(SyncModel model, int schema)
     {
-        _owner = new OwnerStore(_ownerPath, model, new OwnerOptions { SchemaVersion = schema, Log = _syncLog, OnlineInterval = TimeSpan.FromMilliseconds(300) });
-        _owner.Install();
         // The same port after a restart: the client keeps the owner's address.
-        _host = await OwnerHost.StartAsync(_owner, _port);
+        _host = await OwnerHost.StartAsync(_ownerPath, model,
+            new OwnerOptions { SchemaVersion = schema, Log = _syncLog, OnlineInterval = TimeSpan.FromMilliseconds(300) }, _port);
+        _owner = _host.Store;
         _port = _host.Port;
     }
 
     private void StartClient(SyncModel model, int schema)
     {
-        _client = new ClientReplication(_clientPath, model, _syncLog);
-        _client.Install();
+        _client = new ClientReplication(ClientReplication.BuildServices(_clientPath, model).InstallClientStore(), _syncLog);
         var options = new AgentOptions
         {
             SchemaVersion = schema,
@@ -221,7 +220,7 @@ public sealed class SchemaMigrationTests
 
     private async Task ClientEditAsync(int schema, Guid id, Action<Product> change)
     {
-        await using ShopDbContext db = ShopDbContext.Open(_clientPath, schema, _client!.Interceptors());
+        await using ShopDbContext db = ShopDbContext.Open(_clientPath, schema, _client!.Router);
         change(await db.Products.SingleAsync(x => x.Id == id && EF.Property<string>(x, SyncColumns.InstanceId) == Instance));
         await db.SaveChangesAsync();
     }

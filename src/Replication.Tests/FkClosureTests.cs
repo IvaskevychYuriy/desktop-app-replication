@@ -104,7 +104,7 @@ public sealed class FkClosureTests
 
 public sealed class Node
 {
-    public Guid Id { get; set; } = Guid.CreateVersion7();
+    public Guid Id { get; set; } = Guid.NewGuid();
     public string Name { get; set; } = "";
     public Guid? ParentId { get; set; }
     public Node? Parent { get; set; }
@@ -112,7 +112,7 @@ public sealed class Node
 
 public sealed class Dept
 {
-    public Guid Id { get; set; } = Guid.CreateVersion7();
+    public Guid Id { get; set; } = Guid.NewGuid();
     public string Name { get; set; } = "";
     public Guid? ManagerId { get; set; }
     public Emp? Manager { get; set; }
@@ -120,7 +120,7 @@ public sealed class Dept
 
 public sealed class Emp
 {
-    public Guid Id { get; set; } = Guid.CreateVersion7();
+    public Guid Id { get; set; } = Guid.NewGuid();
     public string Name { get; set; } = "";
     public Guid? DeptId { get; set; }
     public Dept? Dept { get; set; }
@@ -207,21 +207,18 @@ internal sealed class GraphPair : IAsyncDisposable
             db.Database.EnsureCreated();
             model = SyncModel.From(db);
         }
-        var store = new OwnerStore(ownerPath, model, new OwnerOptions { Log = log, OnlineInterval = TimeSpan.FromMilliseconds(300) });
-        store.Install();
+        OwnerHost owner = await OwnerHost.StartAsync(ownerPath, model, new OwnerOptions { Log = log, OnlineInterval = TimeSpan.FromMilliseconds(300) });
         if (seedOwner is not null)
         {
             using GraphDbContext db = GraphDbContext.Open(ownerPath);
             seedOwner(db);
             db.SaveChanges();
         }
-        OwnerHost owner = await OwnerHost.StartAsync(store);
 
         string clientPath = Path.Combine(dir, "client.db");
         using (GraphDbContext db = GraphDbContext.Open(clientPath))
             db.Database.EnsureCreated();
-        var client = new ClientReplication(clientPath, model, log);
-        client.Install();
+        var client = new ClientReplication(ClientReplication.BuildServices(clientPath, model).InstallClientStore(), log);
         var pair = new GraphPair(owner, client, log);
         client.Connect(owner.Address, "Власник", new AgentOptions { AckInterval = TimeSpan.FromMilliseconds(300) }, Label);
         await pair.SyncAsync();
@@ -238,7 +235,7 @@ internal sealed class GraphPair : IAsyncDisposable
         owner.SaveChanges();
     }
 
-    public GraphDbContext ClientDb() => GraphDbContext.Open(Client.Store.DbPath, Client.Interceptors());
+    public GraphDbContext ClientDb() => GraphDbContext.Open(Client.Store.DbPath, Client.Router);
 
     public GraphDbContext OwnerDb() => GraphDbContext.Open(Owner.Store.DbPath);
 
