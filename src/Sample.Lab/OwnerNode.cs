@@ -15,15 +15,18 @@ public sealed class OwnerNode : IAsyncDisposable
 {
     private static readonly string[] s_autoNames = ["Ліхтарик", "Батарейки", "Клей", "Блокнот", "Лампа", "Кабель", "Фарба", "Рукавиці"];
     private static readonly string[] s_statuses = ["новий", "активний", "архів"];
-    private readonly Random _rnd = new(42);
+    private readonly Random _rnd;
+    private readonly OwnerSeed _seed;
     private int _logN;
 
-    private OwnerNode(string dbPath, OwnerStore store, OwnerHost host, SyncLog log)
+    private OwnerNode(string dbPath, OwnerStore store, OwnerHost host, SyncLog log, OwnerSeed seed)
     {
         DbPath = dbPath;
         Store = store;
         Host = host;
         Log = log;
+        _seed = seed;
+        _rnd = new Random(seed.RandomSeed);
     }
 
     public string DbPath { get; }
@@ -32,7 +35,8 @@ public sealed class OwnerNode : IAsyncDisposable
     public SyncLog Log { get; }
     public string Address => Host.Address;
 
-    public static async Task<OwnerNode> StartAsync(string dbPath, SyncLog log, int port = 0, bool listenAnywhere = false, Action<OwnerOptions>? configure = null)
+    /// <param name="seed">Initial data of an empty database; <see cref="OwnerSeed.Default"/> when null.</param>
+    public static async Task<OwnerNode> StartAsync(string dbPath, SyncLog log, int port = 0, bool listenAnywhere = false, Action<OwnerOptions>? configure = null, OwnerSeed? seed = null)
     {
         SyncModel model;
         using (SampleDbContext db = SampleDbContext.Open(dbPath))
@@ -43,7 +47,7 @@ public sealed class OwnerNode : IAsyncDisposable
         bool empty;
         await using (SampleDbContext db = SampleDbContext.Open(dbPath))
             empty = !await db.Categories.AnyAsync();
-        var node = new OwnerNode(dbPath, host.Store, host, log);
+        var node = new OwnerNode(dbPath, host.Store, host, log, seed ?? OwnerSeed.Default);
         if (empty)
             await node.SeedAsync();
         return node;
@@ -62,22 +66,14 @@ public sealed class OwnerNode : IAsyncDisposable
     private async Task SeedAsync()
     {
         await using SampleDbContext db = Db();
-        Dictionary<string, Category> cats = new[] { "Офіс", "Склад", "Архів" }.ToDictionary(n => n, n => new Category { Name = n });
+        Dictionary<string, Category> cats = _seed.Categories.ToDictionary(n => n, n => new Category { Name = n });
         db.Categories.AddRange(cats.Values);
-        foreach ((string n, long p, string s, string c) in new[]
-                 {
-                     ("Степлер", 120L, "активний", "Офіс"), ("Папір A4", 240L, "активний", "Офіс"), ("Маркери", 85L, "новий", "Офіс"),
-                     ("Палета", 450L, "активний", "Склад"), ("Стрейч-плівка", 310L, "активний", "Склад"), ("Скотч", 40L, "новий", "Склад"),
-                     ("Старий принтер", 900L, "архів", "Архів"), ("Факс", 300L, "архів", "Архів"), ("Каталог 2019", 15L, "архів", "Офіс"),
-                 })
-        {
+        foreach ((string n, long p, string s, string c) in _seed.Items)
             db.Items.Add(new Item { Name = n, Price = p, Status = s, Category = cats[c] });
-        }
-
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i < _seed.LogEntries; i++)
             db.Log.Add(NextLogEntry());
         await db.SaveChangesAsync();
-        Say($"початкові дані: 3 категорії, 9 товарів, 3 записи журналу; голова {Head()}");
+        Say($"початкові дані: {_seed.Categories.Count} категорії, {_seed.Items.Count} товарів, {_seed.LogEntries} записи журналу; голова {Head()}");
     }
 
     public long Head()
@@ -220,4 +216,23 @@ public sealed class OwnerNode : IAsyncDisposable
     }
 
     public ValueTask DisposeAsync() => Host.DisposeAsync();
+}
+
+/// <summary>What an empty owner database starts with, and the seed of its automation's random choices.</summary>
+public sealed record OwnerSeed(int RandomSeed, IReadOnlyList<string> Categories, IReadOnlyList<(string Name, long Price, string Status, string Category)> Items, int LogEntries)
+{
+    /// <summary>3 categories, 9 items and 3 log entries, as on the demo page.</summary>
+    public static readonly OwnerSeed Default = new(42, ["Офіс", "Склад", "Архів"],
+    [
+        ("Степлер", 120L, "активний", "Офіс"), ("Папір A4", 240L, "активний", "Офіс"), ("Маркери", 85L, "новий", "Офіс"),
+        ("Палета", 450L, "активний", "Склад"), ("Стрейч-плівка", 310L, "активний", "Склад"), ("Скотч", 40L, "новий", "Склад"),
+        ("Старий принтер", 900L, "архів", "Архів"), ("Факс", 300L, "архів", "Архів"), ("Каталог 2019", 15L, "архів", "Офіс"),
+    ], 3);
+
+    /// <summary>A second owner with its own data: 2 categories, 5 items and 6 log entries, none of the names shared with <see cref="Default"/>.</summary>
+    public static readonly OwnerSeed Second = new(7, ["Кухня", "Гараж"],
+    [
+        ("Чайник", 650L, "активний", "Кухня"), ("Тарілки", 180L, "новий", "Кухня"), ("Ключі", 320L, "активний", "Гараж"),
+        ("Мастило", 95L, "новий", "Гараж"), ("Шини", 2400L, "архів", "Гараж"),
+    ], 6);
 }

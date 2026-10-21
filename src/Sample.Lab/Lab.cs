@@ -46,8 +46,8 @@ public sealed class Lab : IAsyncDisposable
             configureOwner?.Invoke(o);
         });
         AgentOptions Opt() => new AgentOptions { AckInterval = TimeSpan.FromMilliseconds(300), ApplyTimeout = TimeSpan.FromSeconds(15), LagWarningWindow = TimeSpan.FromSeconds(6) };
-        ClientNode c1 = ClientNode.Create("Клієнт 1", Path.Combine(dir, "client1.db"), owner.Address, log, Opt());
-        ClientNode c2 = ClientNode.Create("Клієнт 2", Path.Combine(dir, "client2.db"), owner.Address, log, Opt());
+        ClientNode c1 = ClientNode.Connect(ClientNode.Create(Path.Combine(dir, "client1.db"), log), "Клієнт 1", owner.Address, Opt());
+        ClientNode c2 = ClientNode.Connect(ClientNode.Create(Path.Combine(dir, "client2.db"), log), "Клієнт 2", owner.Address, Opt());
         return new Lab(dir, log, owner, c1, c2);
     }
 
@@ -169,8 +169,8 @@ public sealed class Lab : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _cts.Cancel();
-        await C1.DisposeAsync();
-        await C2.DisposeAsync();
+        await C1.Replication.DisposeAsync();
+        await C2.Replication.DisposeAsync();
         await Owner.DisposeAsync();
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
     }

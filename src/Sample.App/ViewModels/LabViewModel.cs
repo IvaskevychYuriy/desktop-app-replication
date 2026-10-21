@@ -242,7 +242,7 @@ public sealed partial class ClientWindowViewModel : ObservableObject
         Feed.Attach(log);
         try
         {
-            ClientNode node = ClientNode.Create(o.Name, o.DbPath, o.Connect, log);
+            ClientNode node = ClientNode.Connect(ClientNode.Create(o.DbPath, log), o.Name, o.Connect);
             node.Link = true;
             Client = new ClientPanelViewModel(node);
             State = $"підключення до {o.Connect}, БД {node.DbPath}";
