@@ -126,8 +126,8 @@ public sealed class ClientToOwnerTests : LabTests
         var mine = new Category { Name = "Мої нотатки" };
         await using (SampleDbContext db = lab.C1.Db())
         {
-            db.Categories.Add(mine).SetInstance(SyncColumns.LocalInstance);
-            db.Items.Add(new Item { Name = "Чернетка", Category = mine }).SetInstance(SyncColumns.LocalInstance);
+            db.Categories.Add(mine);
+            db.Items.Add(new Item { Name = "Чернетка", Category = mine });
             await db.SaveChangesAsync();
         }
         await lab.Owner.BurstAsync();
@@ -135,12 +135,12 @@ public sealed class ClientToOwnerTests : LabTests
 
         Assert.That(lab.C1.Outbox(), Is.Empty);
         Assert.That(lab.OwnerHas("Category", mine.Id), Is.False);
-        Assert.That(Rows.All(lab.C1.DbPath, "Item", SyncColumns.LocalInstance).Values.Select(r => r["Name"]), Is.EqualTo(new[] { "Чернетка" }));
+        Assert.That(Rows.All(lab.C1.DbPath, "Item").Values.Where(r => r.Instance is null).Select(r => r["Name"]), Is.EqualTo(new[] { "Чернетка" }), "the client's own rows keep InstanceId NULL");
         Assert.That(lab.Diff(lab.C1), Is.Empty, "sync leaves rows of other InstanceIds alone");
         // One query over every source, as the UI reads (13).
         string instance = lab.C1.Instance;
         await using SampleDbContext reader = lab.C1.Db();
-        int visible = await reader.Items.CountAsync(x => EF.Property<string>(x, SyncColumns.InstanceId) == SyncColumns.LocalInstance || EF.Property<string>(x, SyncColumns.InstanceId) == instance);
+        int visible = await reader.Items.CountAsync(x => EF.Property<string?>(x, SyncColumns.InstanceId) == null || EF.Property<string>(x, SyncColumns.InstanceId) == instance);
         Assert.That(visible, Is.EqualTo(Rows.All(lab.Owner.DbPath, "Item").Count + 1));
     }
 

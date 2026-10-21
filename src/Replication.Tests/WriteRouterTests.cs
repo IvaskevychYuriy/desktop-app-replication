@@ -339,7 +339,7 @@ public sealed class WriteRouterTests
     private static async Task AssertNextSaveQueuesNothingAsync(ClientDb client, SampleDbContext db)
     {
         db.ChangeTracker.Clear();
-        db.Log.Add(new LogEntry { Text = "нотатка" }).SetInstance(SyncColumns.LocalInstance);
+        db.Log.Add(new LogEntry { Text = "нотатка" });
         await db.SaveChangesAsync(TestContext.CurrentContext.CancellationToken);
         Assert.That(client.Replication.Store.Entries(), Is.Empty);
     }

@@ -8,10 +8,11 @@ using Sample.Domain;
 namespace Sample.Lab;
 
 /// <summary>
-/// A client: one database for every instance, the user's edits go through an ordinary DbContext with the
-/// WriteRouter interceptor; the agent syncs in the background (design 4, 8.1).
+/// A client's replica of one owner: one database for every instance, the user's edits go through an ordinary DbContext
+/// with the WriteRouter interceptor; the owner's agent syncs in the background (design 4, 8.1).
 /// </summary>
-public sealed class ClientNode : IAsyncDisposable
+/// <remarks>The <see cref="ClientReplication"/> owns the agents: dispose it, not the nodes.</remarks>
+public sealed class ClientNode
 {
     private ClientNode(string label, string dbPath, ClientReplication replication, SyncAgent agent, SyncLog log)
     {
@@ -28,17 +29,23 @@ public sealed class ClientNode : IAsyncDisposable
     public SyncAgent Agent { get; }
     public SyncLog Log { get; }
 
-    public static ClientNode Create(string label, string dbPath, string ownerAddress, SyncLog log, AgentOptions? options = null)
+    /// <summary>The client without owners: the database migrated, the service tables installed. Owners are added by <see cref="Connect"/>.</summary>
+    public static ClientReplication Create(string dbPath, SyncLog log)
     {
         SyncModel model;
         using (SampleDbContext db = SampleDbContext.Open(dbPath))
             model = SyncModel.From(db);
         ServiceProvider services = ClientReplication.BuildServices(dbPath, model, s => s.AddSampleDb(dbPath, sp => [sp.GetRequiredService<WriteRouter>()]));
         services.MigrateSampleDb().InstallClientStore();
-        var replication = new ClientReplication(services, log);
-        SyncAgent agent = replication.Connect(ownerAddress, "Власник", options, label);
+        return new ClientReplication(services, log);
+    }
+
+    /// <summary>Connects the client to one more owner: the same database and WriteRouter, a new agent (4).</summary>
+    public static ClientNode Connect(ClientReplication replication, string label, string ownerAddress, AgentOptions? options = null, string ownerName = "Власник")
+    {
+        SyncAgent agent = replication.Connect(ownerAddress, ownerName, options, label);
         agent.SetOpenTables("Item");
-        return new ClientNode(label, dbPath, replication, agent, log);
+        return new ClientNode(label, replication.Store.DbPath, replication, agent, replication.Log);
     }
 
     public bool Link
@@ -178,6 +185,4 @@ public sealed class ClientNode : IAsyncDisposable
         Say($"переносить в архів: {string.Join(", ", rows.Select(r => $"«{r.Name}»"))}");
         return await Agent.ArchiveAsync(ids);
     }
-
-    public ValueTask DisposeAsync() => Replication.DisposeAsync();
 }

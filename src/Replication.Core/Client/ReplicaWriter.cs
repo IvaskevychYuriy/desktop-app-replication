@@ -7,7 +7,7 @@ namespace Replication.Client;
 
 /// <summary>
 /// Applies what the owner sends to the rows of one instance (7). Every statement carries <c>InstanceId = X</c>,
-/// so <c>local</c> rows and archives are never touched. Idempotent and order-independent: an older version never
+/// so the client's own rows (<c>InstanceId</c> NULL) and archives are never touched. Idempotent and order-independent: an older version never
 /// overwrites a newer one, and the outbox protects local edits.
 /// </summary>
 internal sealed class ReplicaWriter(SyncModel model, string instance)

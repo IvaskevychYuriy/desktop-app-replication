@@ -49,6 +49,8 @@ public sealed class ClientReplication : IAsyncDisposable
 
     public SyncModel Model => Store.Model;
 
+    public SyncLog Log => _log;
+
     public string ClientId => Store.ClientId;
 
     public IReadOnlyList<SyncAgent> Agents

@@ -53,6 +53,9 @@ public sealed partial class LabViewModel : ObservableObject
     [ObservableProperty]
     private string _labDir = "";
 
+    [ObservableProperty]
+    private int _selectedTab;
+
     public LabViewModel()
     {
         _selectedScenario = Scenarios.All[0];
@@ -64,6 +67,15 @@ public sealed partial class LabViewModel : ObservableObject
     public IReadOnlyList<Scenario> ScenarioList => Scenarios.All;
     public LogFeed Feed { get; } = new LogFeed();
     public ObservableCollection<StepView> Steps { get; } = [];
+
+    /// <summary>The second tab: one client on two owners.</summary>
+    public TwoOwnerLabViewModel TwoOwners { get; } = new TwoOwnerLabViewModel();
+
+    partial void OnSelectedTabChanged(int value)
+    {
+        if (value == 1)
+            _ = TwoOwners.EnsureStartedAsync();
+    }
 
     partial void OnSelectedScenarioChanged(Scenario value) => _ = StartScenarioAsync(value);
 
@@ -242,7 +254,7 @@ public sealed partial class ClientWindowViewModel : ObservableObject
         Feed.Attach(log);
         try
         {
-            ClientNode node = ClientNode.Create(o.Name, o.DbPath, o.Connect, log);
+            ClientNode node = ClientNode.Connect(ClientNode.Create(o.DbPath, log), o.Name, o.Connect);
             node.Link = true;
             Client = new ClientPanelViewModel(node);
             State = $"підключення до {o.Connect}, БД {node.DbPath}";

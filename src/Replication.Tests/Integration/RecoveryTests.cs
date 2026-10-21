@@ -180,14 +180,14 @@ public sealed class RecoveryTests
             ReconnectMin = TimeSpan.FromMilliseconds(200),
             ReconnectMax = TimeSpan.FromSeconds(1),
         };
-        _client = ClientNode.Create("клієнт", ClientPath, $"http://127.0.0.1:{_port}", _syncLog, options);
+        _client = ClientNode.Connect(ClientNode.Create(ClientPath, _syncLog), "клієнт", $"http://127.0.0.1:{_port}", options);
         _client.Link = true;
     }
 
     private async Task StopClientAsync()
     {
         if (_client is not null)
-            await _client.DisposeAsync();
+            await _client.Replication.DisposeAsync();
         _client = null;
     }
 

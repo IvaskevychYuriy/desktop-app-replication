@@ -15,6 +15,7 @@ namespace Sample.Lab;
 public sealed class OwnerHost : IAsyncDisposable
 {
     private readonly WebApplication _app;
+    private int _disposed;
 
     private OwnerHost(WebApplication app, OwnerStore store, int port)
     {
@@ -57,8 +58,11 @@ public sealed class OwnerHost : IAsyncDisposable
         return new OwnerHost(app, store, actualPort);
     }
 
+    /// <summary>Stops the server; a second call does nothing, so a test may stop an owner before the lab is disposed.</summary>
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
         using (var stop = new CancellationTokenSource(TimeSpan.FromSeconds(2)))
             await _app.StopAsync(stop.Token);
         await _app.DisposeAsync();

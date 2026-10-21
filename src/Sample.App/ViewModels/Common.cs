@@ -26,7 +26,7 @@ public sealed class LogFeed : ObservableObject
             SyncLogLevel.Ok => Brushes.SeaGreen,
             SyncLogLevel.Warn => Brushes.DarkOrange,
             SyncLogLevel.Bad => Brushes.IndianRed,
-            _ => e.Source == "owner" ? Brushes.SteelBlue : e.Source == "сценарій" ? Brushes.MediumPurple : Brushes.Gray,
+            _ => e.Source == "owner" || e.Source.StartsWith("Власник", StringComparison.Ordinal) ? Brushes.SteelBlue : e.Source == "сценарій" ? Brushes.MediumPurple : Brushes.Gray,
         };
         Lines.Add(new LogLine(e.At.ToString("HH:mm:ss.fff"), e.Source, e.Text, brush));
         while (Lines.Count > Max)
