@@ -129,7 +129,6 @@ public sealed partial class AgentViewModel : ObservableObject
         {
             AgentState.SchemaMismatch => ("Оновіть додаток на інстансі або клієнті", Brushes.IndianRed),
             AgentState.Connecting => ("Start…", Brushes.SteelBlue),
-            AgentState.Flushing => ("Відправка черги перед знімком", Brushes.DarkOrange),
             AgentState.Snapshot => ($"Завантаження, {s.SnapshotProgress ?? 0:P0}", Brushes.SteelBlue),
             AgentState.Catchup when s.LagWarning => ($"Канал не встигає: відстаємо на {s.Remaining} змін, росте", Brushes.IndianRed),
             AgentState.Catchup => ($"Досинхронізація, лишилось {s.Remaining} змін", Brushes.DarkOrange),

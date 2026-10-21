@@ -7,7 +7,7 @@ namespace Replication.Tests.Integration;
 
 /// <summary>
 /// Restarts and recovery (5.3, 10.3, 14): either side restarts and sync resumes from what is in the databases;
-/// a restored owner database and a client behind the retention period both end in a new snapshot that keeps the outbox.
+/// a restored owner database and a client behind the retention period both end in a new snapshot that replaces the replica and drops the outbox.
 /// </summary>
 [TestFixture]
 public sealed class RecoveryTests
@@ -100,7 +100,7 @@ public sealed class RecoveryTests
     }
 
     [Test]
-    public async Task Owner_restored_from_a_backup_gets_a_new_instance_and_the_client_takes_a_snapshot_with_its_outbox()
+    public async Task Owner_restored_from_a_backup_gets_a_new_instance_and_the_client_takes_a_snapshot_and_drops_its_outbox()
     {
         await StartOwnerAsync();
         StartClient();
@@ -127,12 +127,13 @@ public sealed class RecoveryTests
 
         Assert.That(_client.Instance, Is.EqualTo(_owner.Store.InstanceId));
         Assert.That(Rows.All(ClientPath, "Item", oldInstance), Is.Empty, "the old replica is gone");
-        Assert.That(Inspect.OwnerItem(_owner, "Степлер")?.Price, Is.EqualTo(150), "the outbox moved to the new replica");
+        Assert.That(Inspect.OwnerItem(_owner, "Степлер")?.Price, Is.Not.EqualTo(150), "the offline edit belonged to the old replica and is dropped");
+        Assert.That(_client.Outbox(), Is.Empty);
         Assert.That(Inspect.Diff(_owner, _client), Is.Empty);
     }
 
     [Test]
-    public async Task Client_behind_the_retention_period_takes_a_snapshot_and_keeps_its_outbox()
+    public async Task Client_behind_the_retention_period_takes_a_snapshot_and_drops_its_outbox()
     {
         await StartOwnerAsync();
         StartClient();
@@ -153,7 +154,8 @@ public sealed class RecoveryTests
         await SettleAsync();
 
         Assert.That(SnapshotVersion(), Is.GreaterThan(snapshot), "SnapshotRequired, a new snapshot");
-        Assert.That(Inspect.OwnerItem(_owner, "Палета")?.Price, Is.EqualTo(470));
+        Assert.That(Inspect.OwnerItem(_owner, "Палета")?.Price, Is.Not.EqualTo(470), "the offline edit belonged to the old replica and is dropped");
+        Assert.That(_client.Outbox(), Is.Empty);
         Assert.That(Inspect.ClientHas(_client, "Скотч"), Is.False);
         Assert.That(Inspect.Diff(_owner, _client), Is.Empty);
     }
