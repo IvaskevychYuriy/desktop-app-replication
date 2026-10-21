@@ -27,8 +27,6 @@ public sealed partial class TwoOwnerTests
                 _log.Add(e);
         };
         _lab = await TwoOwnerLab.StartAsync(log: log, configureOwner: o => o.CatchupBatchRows = catchupBatchRows);
-        _lab.ToA.Agent.Options.SkipSnapshot = true;
-        _lab.ToB.Agent.Options.SkipSnapshot = true;
         return _lab;
     }
 
