@@ -14,7 +14,7 @@ public sealed class TwoOwnerLab : IAsyncDisposable
     public const string OwnerA = "Власник 1";
     public const string OwnerB = "Власник 2";
 
-    private TwoOwnerLab(string dir, SyncLog log, OwnerNode a, OwnerNode b, ClientNode toA, ClientNode toB)
+    private TwoOwnerLab(string dir, SyncLog log, OwnerNode a, OwnerNode b, ClientNode toA, ClientNode toB, LocalData local)
     {
         Dir = dir;
         Log = log;
@@ -22,6 +22,7 @@ public sealed class TwoOwnerLab : IAsyncDisposable
         B = b;
         ToA = toA;
         ToB = toB;
+        Local = local;
     }
 
     public string Dir { get; }
@@ -39,10 +40,14 @@ public sealed class TwoOwnerLab : IAsyncDisposable
     /// <summary>The client's replica of <see cref="B"/>: the same database as <see cref="ToA"/>, its own agent.</summary>
     public ClientNode ToB { get; }
 
+    /// <summary>The client's own rows (<c>InstanceId</c> NULL) in the same database.</summary>
+    public LocalData Local { get; }
+
     public IReadOnlyList<(OwnerNode Owner, ClientNode Client)> Pairs => [(A, ToA), (B, ToB)];
 
     /// <param name="configureOwner">Applied to both owners.</param>
-    public static async Task<TwoOwnerLab> StartAsync(string? dir = null, SyncLog? log = null, Action<OwnerOptions>? configureOwner = null)
+    /// <param name="localSeed">The client's own data, written before it connects to any owner; none when null.</param>
+    public static async Task<TwoOwnerLab> StartAsync(string? dir = null, SyncLog? log = null, Action<OwnerOptions>? configureOwner = null, OwnerSeed? localSeed = null)
     {
         dir ??= Lab.NewDir();
         Directory.CreateDirectory(dir);
@@ -59,9 +64,12 @@ public sealed class TwoOwnerLab : IAsyncDisposable
         OwnerNode b = await Owner(OwnerB, "owner2.db", OwnerSeed.Second);
         AgentOptions Opt() => new AgentOptions { AckInterval = TimeSpan.FromMilliseconds(300), ApplyTimeout = TimeSpan.FromSeconds(15), LagWarningWindow = TimeSpan.FromSeconds(6), SkipSnapshot = true };
         ClientReplication client = ClientNode.Create(Path.Combine(dir, "client.db"), log);
+        var local = new LocalData(client);
+        if (localSeed is not null)
+            await local.SeedAsync(localSeed);
         ClientNode toA = ClientNode.Connect(client, $"Клієнт → {OwnerA}", a.Address, Opt(), OwnerA);
         ClientNode toB = ClientNode.Connect(client, $"Клієнт → {OwnerB}", b.Address, Opt(), OwnerB);
-        return new TwoOwnerLab(dir, log, a, b, toA, toB);
+        return new TwoOwnerLab(dir, log, a, b, toA, toB, local);
     }
 
     /// <summary>A log that forwards to <paramref name="log"/> with the source "owner" replaced by <paramref name="name"/>.</summary>

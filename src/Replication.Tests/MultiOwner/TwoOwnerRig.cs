@@ -297,20 +297,26 @@ internal sealed class TwoOwnerRig : IAsyncDisposable
     public IReadOnlyList<(TestOwner Owner, SyncAgent Agent)> Pairs => [(A, ToA), (B, ToB)];
 
     /// <param name="configureOwner">Applied to both owners.</param>
-    public static async Task<TwoOwnerRig> StartAsync(SyncLog log, Action<OwnerOptions>? configureOwner = null)
+    /// <param name="seedClient">Writes the client's own rows through its DbContext before any agent exists.</param>
+    public static async Task<TwoOwnerRig> StartAsync(SyncLog log, Action<OwnerOptions>? configureOwner = null, Func<SampleDbContext, Task>? seedClient = null)
     {
         string dir = Path.Combine(Path.GetTempPath(), "replication-tests", $"{DateTime.Now:yyyyMMdd-HHmmss}-{Guid.NewGuid().ToString("N")[..6]}");
         Directory.CreateDirectory(dir);
         TestOwner a = await TestOwner.StartAsync(OwnerA, Path.Combine(dir, "owner1.db"), DataA, log, configureOwner);
         TestOwner b = await TestOwner.StartAsync(OwnerB, Path.Combine(dir, "owner2.db"), DataB, log, configureOwner);
         var rig = new TwoOwnerRig(dir, log, a, b);
-        rig.OpenClient();
+        await rig.OpenClientAsync(seedClient);
         return rig;
     }
 
-    private void OpenClient()
+    private async Task OpenClientAsync(Func<SampleDbContext, Task>? seed = null)
     {
         Client = TestClient.Create(ClientPath, Log);
+        if (seed is not null)
+        {
+            await using SampleDbContext db = Client.Db();
+            await seed(db);
+        }
         ToA = Client.Connect(A);
         ToB = Client.Connect(B);
     }
@@ -320,7 +326,7 @@ internal sealed class TwoOwnerRig : IAsyncDisposable
     {
         await Client.DisposeAsync();
         SqliteConnection.ClearAllPools();
-        OpenClient();
+        await OpenClientAsync();
     }
 
     public TestOwner OwnerOf(SyncAgent agent) => Pairs.First(p => p.Agent == agent).Owner;

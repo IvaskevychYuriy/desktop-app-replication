@@ -18,7 +18,7 @@ public sealed partial class TwoOwnerTests
     private readonly List<SyncLogEntry> _log = [];
     private TwoOwnerLab? _lab;
 
-    private async Task<TwoOwnerLab> StartAsync(int catchupBatchRows = 3)
+    private async Task<TwoOwnerLab> StartAsync(int catchupBatchRows = 3, OwnerSeed? localSeed = null)
     {
         var log = new SyncLog();
         log.Written += e =>
@@ -26,7 +26,7 @@ public sealed partial class TwoOwnerTests
             lock (_log)
                 _log.Add(e);
         };
-        _lab = await TwoOwnerLab.StartAsync(log: log, configureOwner: o => o.CatchupBatchRows = catchupBatchRows);
+        _lab = await TwoOwnerLab.StartAsync(log: log, configureOwner: o => o.CatchupBatchRows = catchupBatchRows, localSeed: localSeed);
         return _lab;
     }
 
@@ -367,7 +367,7 @@ public sealed partial class TwoOwnerTests
     }
 
     [Test]
-    public async Task Item_put_in_the_replica_of_owner_2_under_a_category_of_owner_1_is_rejected_by_owner_2()
+    public async Task Item_put_in_the_replica_of_owner_2_under_a_category_of_owner_1_is_refused_on_the_client()
     {
         TwoOwnerLab lab = await StartSyncedAsync();
         Guid office = Rows.All(lab.A.DbPath, "Category").Single(x => (string?)x.Value["Name"] == "Офіс").Key;
@@ -375,18 +375,55 @@ public sealed partial class TwoOwnerTests
         await using (SampleDbContext db = lab.ToB.Db())
         {
             db.Items.Add(item).SetInstance(lab.ToB.Instance);
-            await db.SaveChangesAsync();
+            Assert.That(() => db.SaveChangesAsync(), Throws.InvalidOperationException.With.Message.Contains("own source"));
         }
         await lab.SettleAsync();
 
         Assert.Multiple(() =>
         {
+            Assert.That(Rows.Has(lab.ToB.DbPath, "Item", item.Id), Is.False, "nothing was written");
+            Assert.That(lab.ToB.Outbox(), Is.Empty);
             Assert.That(Rows.Has(lab.B.DbPath, "Item", item.Id), Is.False);
             Assert.That(Rows.Has(lab.A.DbPath, "Item", item.Id), Is.False);
-            Assert.That(Rows.Has(lab.ToB.DbPath, "Item", item.Id), Is.False, "the client drops the rejected row");
-            Assert.That(lab.ToB.Replication.Store.Notes().Select(n => n.Text), Has.Some.Contains("Чужий"));
             Assert.That(Inspect.Diff(lab.A, lab.ToA), Is.Empty);
             Assert.That(Inspect.Diff(lab.B, lab.ToB), Is.Empty);
+        });
+    }
+
+    [Test]
+    public async Task Lab_client_keeps_its_own_seeded_data_through_both_catch_ups_and_edits_it_locally()
+    {
+        TwoOwnerLab lab = await StartAsync(localSeed: LocalData.Seed);
+        string Own() => string.Join("\n", new[] { "Category", "Item", "Log" }.SelectMany(t => Inspect.LocalRows(lab.Local, t)).OrderBy(r => r.Id).Select(r => r.ToString()));
+        string before = Own();
+        Assert.That(Inspect.LocalRows(lab.Local, "Item"), Has.Count.EqualTo(LocalData.Seed.Items.Count));
+
+        lab.ToA.Link = true;
+        lab.ToB.Link = true;
+        await lab.SettleAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Own(), Is.EqualTo(before), "catch-up from both owners left the own rows alone");
+            Assert.That(Rows.Scalar(lab.ToA.DbPath, "SELECT COUNT(*) FROM Item WHERE InstanceId IS NULL"), Is.EqualTo((long)LocalData.Seed.Items.Count));
+            Assert.That(Inspect.Diff(lab.A, lab.ToA), Is.Empty);
+            Assert.That(Inspect.Diff(lab.B, lab.ToB), Is.Empty);
+        });
+
+        long aHead = lab.A.Head();
+        long bHead = lab.B.Head();
+        Guid draft = Guid.Parse(Inspect.LocalRows(lab.Local, "Item").Single(r => r.Label == "Чернетка").Id);
+        await lab.Local.UpdateItemAsync(draft, "Чернетка", 11, "активний");
+        await lab.Local.AddItemAsync();
+        await lab.Local.DeleteWhereStatusAsync("архів");
+        await lab.SettleAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Inspect.LocalRows(lab.Local, "Item").Select(r => r.Label), Is.EquivalentTo(new[] { "Чернетка", "Ідея", "Мій товар 4" }));
+            Assert.That(lab.ToA.Outbox(), Is.Empty);
+            Assert.That(lab.ToB.Outbox(), Is.Empty);
+            Assert.That((lab.A.Head(), lab.B.Head()), Is.EqualTo((aHead, bHead)), "the owners got nothing");
         });
     }
 }

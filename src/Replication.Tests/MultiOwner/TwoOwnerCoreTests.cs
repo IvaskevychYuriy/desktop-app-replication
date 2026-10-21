@@ -21,7 +21,7 @@ public sealed class TwoOwnerCoreTests
     private readonly List<SyncLogEntry> _log = [];
     private TwoOwnerRig? _rig;
 
-    private async Task<TwoOwnerRig> StartAsync(int catchupBatchRows = 3)
+    private async Task<TwoOwnerRig> StartAsync(int catchupBatchRows = 3, Func<SampleDbContext, Task>? seedClient = null)
     {
         var log = new SyncLog();
         log.Written += e =>
@@ -29,13 +29,13 @@ public sealed class TwoOwnerCoreTests
             lock (_log)
                 _log.Add(e);
         };
-        _rig = await TwoOwnerRig.StartAsync(log, o => o.CatchupBatchRows = catchupBatchRows);
+        _rig = await TwoOwnerRig.StartAsync(log, o => o.CatchupBatchRows = catchupBatchRows, seedClient);
         return _rig;
     }
 
-    private async Task<TwoOwnerRig> StartSyncedAsync()
+    private async Task<TwoOwnerRig> StartSyncedAsync(Func<SampleDbContext, Task>? seedClient = null)
     {
-        TwoOwnerRig rig = await StartAsync();
+        TwoOwnerRig rig = await StartAsync(seedClient: seedClient);
         await TwoOwnerRig.SyncNowAsync(rig.ToA);
         await TwoOwnerRig.SyncNowAsync(rig.ToB);
         await rig.SettleAsync();
@@ -80,6 +80,24 @@ public sealed class TwoOwnerCoreTests
     /// <summary>Every row of one replica with its service columns, by table and Id.</summary>
     private List<string> Replica(string instance) =>
         [.. s_tables.SelectMany(t => Sql.Lines(_rig!.ClientPath, $"SELECT '{t}', * FROM \"{t}\" WHERE InstanceId = @i ORDER BY Id", ("@i", instance)))];
+
+    /// <summary>The client's own rows (<c>InstanceId</c> NULL) with every column, by table and Id.</summary>
+    private List<string> Local() =>
+        [.. s_tables.SelectMany(t => Sql.Lines(_rig!.ClientPath, $"SELECT '{t}', * FROM \"{t}\" WHERE InstanceId IS NULL ORDER BY Id"))];
+
+    /// <summary>Everything in the client database: every row of every source and the outbox.</summary>
+    private List<string> ClientState() =>
+    [
+        .. s_tables.SelectMany(t => Sql.Lines(_rig!.ClientPath, $"SELECT '{t}', * FROM \"{t}\" ORDER BY Id")),
+        .. Sql.Lines(_rig!.ClientPath, "SELECT 'outbox', * FROM _sync_outbox ORDER BY id"),
+    ];
+
+    private long AllOutbox() => Sql.Scalar<long>(_rig!.ClientPath, "SELECT COUNT(*) FROM _sync_outbox");
+
+    /// <summary>Whether a row with this Id is anywhere in either owner's database (as a row or a tombstone).</summary>
+    private bool OnAnyOwner(Guid id) =>
+        _rig!.Pairs.Any(p => s_tables.Any(t => OwnerHas(p.Owner, t, id))
+                             || Sql.Scalar<long>(p.Owner.DbPath, "SELECT COUNT(*) FROM _sync_tombstones WHERE pk = @p", ("@p", Wire.PkText(id))) > 0);
 
     /// <summary>Everything an owner stores: rows, tombstones, head, and what it knows of its clients.</summary>
     private static List<string> OwnerState(TestOwner o) =>
@@ -495,26 +513,221 @@ public sealed class TwoOwnerCoreTests
     }
 
     [Test]
-    public async Task Item_put_in_the_replica_of_owner_2_under_a_category_of_owner_1_is_rejected_by_owner_2()
+    public async Task Item_put_in_the_replica_of_owner_2_under_a_category_of_owner_1_is_refused_on_the_client()
     {
         TwoOwnerRig rig = await StartSyncedAsync();
         string b = Instance(rig.ToB);
+        List<string> client = ClientState();
         List<string> aBefore = OwnerState(rig.A);
+        List<string> bBefore = OwnerState(rig.B);
         var item = new Item { Name = "Чужий", Price = 1, Status = "новий", CategoryId = rig.A.CategoryId("Офіс") };
         await using (SampleDbContext db = rig.Client.Db())
         {
             db.Items.Add(item).SetInstance(b);
+            Assert.That(() => db.SaveChangesAsync(), Throws.InvalidOperationException.With.Message.Contains("own source"));
+        }
+        await rig.SettleAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ClientState(), Is.EqualTo(client), "nothing was written, nothing was queued");
+            Assert.That(OwnerState(rig.A), Is.EqualTo(aBefore));
+            Assert.That(OwnerState(rig.B), Is.EqualTo(bBefore), "owner 2 got nothing");
+            Assert.That(AppliedSeq(rig.B), Is.Zero);
+            AssertConverged(rig.A, rig.ToA);
+            AssertConverged(rig.B, rig.ToB);
+        });
+    }
+
+    // The client's own data: InstanceId NULL, one more source next to the owners.
+
+    private static readonly Guid s_mine = Guid.Parse("0000000a-0000-0000-0000-000000000001");
+    private static readonly Guid s_draft = Guid.Parse("0000000a-0000-0000-0000-000000000002");
+    private static readonly Guid s_idea = Guid.Parse("0000000a-0000-0000-0000-000000000003");
+    private static readonly Guid s_note = Guid.Parse("0000000a-0000-0000-0000-000000000004");
+
+    /// <summary>The client's data from before replication: a category with 2 items and a log entry, saved with no InstanceId.</summary>
+    private static async Task SeedLocalAsync(SampleDbContext db)
+    {
+        var mine = new Category { Id = s_mine, Name = "Мої" };
+        db.Categories.Add(mine);
+        db.Items.Add(new Item { Id = s_draft, Name = "Чернетка", Price = 10, Category = mine });
+        db.Items.Add(new Item { Id = s_idea, Name = "Ідея", Price = 20, Category = mine });
+        db.Log.Add(new LogEntry { Id = s_note, Text = "моя нотатка" });
+        await db.SaveChangesAsync();
+    }
+
+    [Test]
+    public async Task Client_with_its_own_data_joins_both_owners_and_keeps_it_apart()
+    {
+        TwoOwnerRig rig = await StartAsync(seedClient: SeedLocalAsync);
+        List<string> local = Local();
+        long aHead = rig.A.Head();
+        long bHead = rig.B.Head();
+        Assert.Multiple(() =>
+        {
+            Assert.That(local, Has.Count.EqualTo(4), "the own rows are there before any owner");
+            Assert.That(s_tables.Sum(t => Sql.Scalar<long>(rig.ClientPath, $"SELECT COUNT(*) FROM \"{t}\" WHERE InstanceId IS NOT NULL")), Is.Zero, "own rows keep InstanceId NULL");
+            Assert.That(AllOutbox(), Is.Zero);
+        });
+
+        rig.ToA.LinkEnabled = true;
+        rig.ToB.LinkEnabled = true;
+        await rig.SettleAsync();
+
+        string a = Instance(rig.ToA);
+        string b = Instance(rig.ToB);
+        Assert.Multiple(() =>
+        {
+            Assert.That(Local(), Is.EqualTo(local), "the catch-up of both owners left the own rows alone");
+            Assert.That(Sql.Lines(rig.ClientPath, "SELECT COALESCE(InstanceId, 'NULL'), COUNT(*) FROM Item GROUP BY InstanceId"),
+                Is.EquivalentTo(new[] { "NULL|2", $"{a}|9", $"{b}|5" }));
+            Assert.That(new[] { s_mine, s_draft, s_idea, s_note }.Where(OnAnyOwner), Is.Empty, "no own row reached an owner");
+            Assert.That((rig.A.Head(), rig.B.Head()), Is.EqualTo((aHead, bHead)), "the owners got nothing");
+            Assert.That(AppliedSeq(rig.A), Is.Zero);
+            Assert.That(AppliedSeq(rig.B), Is.Zero);
+            AssertConverged(rig.A, rig.ToA);
+            AssertConverged(rig.B, rig.ToB);
+        });
+
+        // After the sync the user goes on with the own data: edit, delete, add, a new category with an item in one save.
+        List<string> aBefore = OwnerState(rig.A);
+        List<string> bBefore = OwnerState(rig.B);
+        await EditItemAsync(s_draft, x => x.Price = 15);
+        await using (SampleDbContext db = rig.Client.Db())
+        {
+            db.Items.Remove(await db.Items.SingleAsync(x => x.Id == s_idea));
+            db.Items.Add(new Item { Name = "Нова", Price = 30, CategoryId = s_mine });
+            var more = new Category { Name = "Ще" };
+            db.Categories.Add(more);
+            db.Items.Add(new Item { Name = "Ще одна", Price = 40, Category = more });
+            await db.SaveChangesAsync();
+        }
+        await rig.SettleAsync();
+
+        local = Local();
+        Assert.Multiple(() =>
+        {
+            Assert.That(Sql.Lines(rig.ClientPath, "SELECT Name, Price FROM Item WHERE InstanceId IS NULL ORDER BY Price"),
+                Is.EqualTo(new[] { "Чернетка|15", "Нова|30", "Ще одна|40" }));
+            Assert.That(Sql.Lines(rig.ClientPath, "SELECT Name FROM Category WHERE InstanceId IS NULL ORDER BY Name"), Is.EquivalentTo(new[] { "Мої", "Ще" }));
+            Assert.That(AllOutbox(), Is.Zero, "own edits are never queued");
+            Assert.That(OwnerState(rig.A), Is.EqualTo(aBefore));
+            Assert.That(OwnerState(rig.B), Is.EqualTo(bBefore));
+        });
+
+        // Owner traffic meanwhile, a cascade delete on owner 2 among it, does not reach the own rows.
+        await rig.A.SetPriceAsync("Степлер", 130);
+        await rig.A.AddLogAsync(2);
+        await using (SampleDbContext db = rig.B.Db())
+        {
+            db.Categories.Remove(await db.Categories.SingleAsync(x => x.Name == "Гараж"));
             await db.SaveChangesAsync();
         }
         await rig.SettleAsync();
 
         Assert.Multiple(() =>
         {
-            Assert.That(OwnerHas(rig.B, "Item", item.Id), Is.False);
-            Assert.That(OwnerState(rig.A), Is.EqualTo(aBefore), "owner 1 got nothing");
-            Assert.That(ClientHas("Item", item.Id), Is.False, "the client drops the rejected row");
-            Assert.That(Sql.Lines(rig.ClientPath, "SELECT text FROM _sync_notes WHERE instance = @i", ("@i", b)), Has.Some.Contains("Чужий"));
-            Assert.That(AppliedSeq(rig.B), Is.EqualTo(1L), "the action was consumed");
+            Assert.That(Local(), Is.EqualTo(local));
+            Assert.That((Count("Category", b), Count("Item", b)), Is.EqualTo((1L, 2L)));
+            AssertConverged(rig.A, rig.ToA);
+            AssertConverged(rig.B, rig.ToB);
+        });
+
+        // Deleting an own category cascades over its own items only, still with nothing queued.
+        await using (SampleDbContext db = rig.Client.Db())
+        {
+            db.Categories.Remove(await db.Categories.SingleAsync(x => x.Id == s_mine));
+            await db.SaveChangesAsync();
+        }
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Sql.Lines(rig.ClientPath, "SELECT Name FROM Item WHERE InstanceId IS NULL"), Is.EqualTo(new[] { "Ще одна" }));
+            Assert.That(AllOutbox(), Is.Zero);
+            Assert.That((Count("Item", a), Count("Item", b)), Is.EqualTo((9L, 2L)), "the replicas keep their rows");
+        });
+    }
+
+    [Test]
+    public async Task Restarted_client_keeps_its_own_data_and_catch_up_does_not_touch_it()
+    {
+        TwoOwnerRig rig = await StartSyncedAsync(SeedLocalAsync);
+        List<string> local = Local();
+        await rig.RestartClientAsync();
+        await rig.B.SetPriceAsync("Чайник", 730);
+        rig.ToA.LinkEnabled = true;
+        rig.ToB.LinkEnabled = true;
+        await rig.SettleAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(Local(), Is.EqualTo(local));
+            Assert.That(rig.Client.Tables(rig.A, AgentState.Catchup), Is.Empty);
+            Assert.That(rig.Client.Tables(rig.B, AgentState.Catchup), Is.EqualTo(new[] { "Item" }));
+            Assert.That(AllOutbox(), Is.Zero);
+            AssertConverged(rig.A, rig.ToA);
+            AssertConverged(rig.B, rig.ToB);
+        });
+
+        // The own data stays editable after the restart.
+        await EditItemAsync(s_draft, x => x.Name = "Чернетка 2");
+        Assert.Multiple(() =>
+        {
+            Assert.That(ClientValue("Item", s_draft, "Name"), Is.EqualTo("Чернетка 2"));
+            Assert.That(ClientValue("Item", s_draft, SyncColumns.InstanceId), Is.Null);
+            Assert.That(AllOutbox(), Is.Zero);
+        });
+    }
+
+    /// <summary>A row may point only to rows of its own source: a save that breaks it throws and writes nothing.</summary>
+    [TestCase("own item under an owner category")]
+    [TestCase("owner item under an own category")]
+    [TestCase("own item moved to an owner category")]
+    [TestCase("owner item moved to an own category")]
+    public async Task Row_pointing_to_another_source_is_refused(string what)
+    {
+        TwoOwnerRig rig = await StartSyncedAsync(SeedLocalAsync);
+        string a = Instance(rig.ToA);
+        Guid office = rig.A.CategoryId("Офіс");
+        Guid stapler = rig.A.ItemId("Степлер");
+        List<string> client = ClientState();
+
+        await using (SampleDbContext db = rig.Client.Db())
+        {
+            switch (what)
+            {
+                case "own item under an owner category":
+                    db.Items.Add(new Item { Name = "Моя", CategoryId = office });
+                    break;
+                case "owner item under an own category":
+                    db.Items.Add(new Item { Name = "Чужа", CategoryId = s_mine }).SetInstance(a);
+                    break;
+                case "own item moved to an owner category":
+                    (await db.Items.SingleAsync(x => x.Id == s_draft)).CategoryId = office;
+                    break;
+                case "owner item moved to an own category":
+                    (await db.Items.SingleAsync(x => x.Id == stapler)).CategoryId = s_mine;
+                    break;
+            }
+            Assert.That(() => db.SaveChangesAsync(), Throws.InvalidOperationException.With.Message.Contains("own source"));
+        }
+
+        Assert.That(ClientState(), Is.EqualTo(client), "nothing was written, nothing was queued");
+
+        // The failed save left no transaction behind: the next ones go through, the owner's one reaches the owner.
+        await EditItemAsync(s_draft, x => x.Price = 11);
+        await EditItemAsync(stapler, x => x.Price = 121);
+        await rig.SettleAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ClientValue("Item", s_draft, "CategoryId"), Is.EqualTo(Wire.PkText(s_mine)));
+            Assert.That(ClientValue("Item", s_draft, "Price"), Is.EqualTo(11L));
+            Assert.That(ClientValue("Item", stapler, "CategoryId"), Is.EqualTo(Wire.PkText(office)));
+            Assert.That(OwnerValue(rig.A, "Item", stapler, "Price"), Is.EqualTo(121L));
+            Assert.That(OwnerValue(rig.A, "Item", stapler, "CategoryId"), Is.EqualTo(Wire.PkText(office)));
+            Assert.That(OwnerHas(rig.A, "Item", s_draft), Is.False);
             AssertConverged(rig.A, rig.ToA);
             AssertConverged(rig.B, rig.ToB);
         });

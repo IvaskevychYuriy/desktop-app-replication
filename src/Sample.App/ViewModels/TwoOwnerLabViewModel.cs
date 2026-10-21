@@ -7,8 +7,8 @@ using Sample.Lab;
 namespace Sample.App.ViewModels;
 
 /// <summary>
-/// The two-owner tab: two owners with different data and one empty client with a replica of each (4). Both links start
-/// off; the client joins each owner by catch-up instead of a snapshot.
+/// The two-owner tab: two owners with different data and one client with its own data (<c>InstanceId</c> NULL) that gets
+/// a replica of each owner (4). Both links start off; the client joins each owner by catch-up instead of a snapshot.
 /// </summary>
 public sealed partial class TwoOwnerLabViewModel : ObservableObject
 {
@@ -43,9 +43,10 @@ public sealed partial class TwoOwnerLabViewModel : ObservableObject
     public LogFeed Feed { get; } = new LogFeed();
 
     public string Intro =>
-        $"Один клієнт з порожньою БД і два власники з різними даними: «{TwoOwnerLab.OwnerA}» ({Describe(OwnerSeed.Default)}) і «{TwoOwnerLab.OwnerB}» ({Describe(OwnerSeed.Second)}). "
+        $"Один клієнт з власними даними ({Describe(LocalData.Seed)}; InstanceId NULL, власникам не йдуть) і два власники з різними даними: «{TwoOwnerLab.OwnerA}» ({Describe(OwnerSeed.Default)}) і «{TwoOwnerLab.OwnerB}» ({Describe(OwnerSeed.Second)}). "
         + "У клієнта по агенту на кожного власника, рядки кожного власника мають свій InstanceId в одній БД. Обидва зв'язки вимкнені: увімкніть їх, "
-        + "і клієнт досинхронізується без знімка (skip_snapshot), а далі отримує онлайн-зміни. Правка рядка йде тільки власнику, з якого рядок прийшов.";
+        + "і клієнт досинхронізується без знімка (skip_snapshot), а далі отримує онлайн-зміни. Правка рядка йде тільки власнику, з якого рядок прийшов; "
+        + "власні рядки ніколи не потрапляють у чергу, і рядок може посилатися тільки на рядки свого джерела.";
 
     private static string Describe(OwnerSeed s) => $"категорій {s.Categories.Count}, товарів {s.Items.Count}, записів журналу {s.LogEntries}";
 
@@ -68,12 +69,12 @@ public sealed partial class TwoOwnerLabViewModel : ObservableObject
             Feed.Clear();
             var log = new SyncLog();
             Feed.Attach(log);
-            TwoOwnerLab lab = await Task.Run(() => TwoOwnerLab.StartAsync(log: log));
+            TwoOwnerLab lab = await Task.Run(() => TwoOwnerLab.StartAsync(log: log, localSeed: LocalData.Seed));
             _lab = lab;
             LabDir = lab.Dir;
             OwnerA = new OwnerPanelViewModel(lab.A) { Name = TwoOwnerLab.OwnerA, Meters = [lab.ToA.Agent.Meter] };
             OwnerB = new OwnerPanelViewModel(lab.B) { Name = TwoOwnerLab.OwnerB, Meters = [lab.ToB.Agent.Meter] };
-            Client = new ClientPanelViewModel("Клієнт · одна БД, два власники", [lab.ToA, lab.ToB]);
+            Client = new ClientPanelViewModel("Клієнт · одна БД: власні дані і два власники", [lab.ToA, lab.ToB], lab.Local);
             _timer.Start();
             State = "";
         }

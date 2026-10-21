@@ -5,9 +5,16 @@ using Sample.Lab;
 
 namespace Sample.App.ViewModels;
 
+/// <summary>Where new rows of the panel go: an owner's replica, or the client's own data when <see cref="Agent"/> is null.</summary>
+public sealed record WriteTarget(string Name, AgentViewModel? Agent)
+{
+    public override string ToString() => Name;
+}
+
 /// <summary>
-/// A client: one database with a replica per owner (4). Per owner its agent (<see cref="AgentViewModel"/>); the grids show
-/// the rows of every replica together, and an edit goes to the agent of the row's owner.
+/// A client: one database with a replica per owner (4) and, optionally, its own data (<c>InstanceId</c> NULL). Per owner its
+/// agent (<see cref="AgentViewModel"/>); the grids show the rows of every source together, and an edit goes to the agent
+/// of the row's owner, or stays in the client for its own rows.
 /// </summary>
 public sealed partial class ClientPanelViewModel : ObservableObject
 {
@@ -23,7 +30,7 @@ public sealed partial class ClientPanelViewModel : ObservableObject
     private RowView? _selectedCategory;
 
     [ObservableProperty]
-    private AgentViewModel _target;
+    private WriteTarget _target;
 
     [ObservableProperty]
     private string _editName = "";
@@ -43,19 +50,29 @@ public sealed partial class ClientPanelViewModel : ObservableObject
     }
 
     /// <param name="nodes">The client's replicas, one per owner, all on the same <see cref="ClientReplication"/>.</param>
-    public ClientPanelViewModel(string title, IReadOnlyList<ClientNode> nodes)
+    /// <param name="local">The client's own data, shown and edited next to the replicas.</param>
+    public ClientPanelViewModel(string title, IReadOnlyList<ClientNode> nodes, LocalData? local = null)
     {
         Title = title;
+        Local = local;
         Agents = [.. nodes.Select(n => new AgentViewModel(n, nodes.Count > 1))];
-        _target = Agents[0];
+        Targets = [.. Agents.Select(a => new WriteTarget(a.Owner, a)), .. local is null ? Array.Empty<WriteTarget>() : [new WriteTarget(OwnSource, null)]];
+        _target = Targets[0];
     }
+
+    /// <summary>The owner column of the client's own rows.</summary>
+    public const string OwnSource = "власні";
+
+    public LocalData? Local { get; }
+
+    public IReadOnlyList<WriteTarget> Targets { get; }
 
     public string Title { get; }
 
     public IReadOnlyList<AgentViewModel> Agents { get; }
 
-    /// <summary>Several owners: the grids get an owner column, new rows a choice of owner.</summary>
-    public bool ManyOwners => Agents.Count > 1;
+    /// <summary>Several sources (owners, own data): the grids get an owner column, new rows a choice of source.</summary>
+    public bool ManyOwners => Targets.Count > 1;
 
     private ClientNode First => Agents[0].Node;
 
@@ -99,16 +116,24 @@ public sealed partial class ClientPanelViewModel : ObservableObject
         }
     }
 
-    /// <summary>One owner: as the replica has them. Several: one list of the client's database, the latest change on top.</summary>
+    /// <summary>One source: as the replica has them. Several: one list of the client's database, the latest change on top.</summary>
     private List<RowView> Rows(string table, int limit = 200) =>
         ManyOwners
             ? [.. Agents.SelectMany(a => Inspect.ClientRows(a.Node, table, limit, newestFirst: true).Select(r => r with { Owner = a.Owner }))
+                .Concat(Local is null ? [] : Inspect.LocalRows(Local, table, limit, newestFirst: true).Select(r => r with { Owner = OwnSource }))
                 .OrderByDescending(r => r.ModifiedOn).ThenByDescending(r => r.Version).Take(limit)]
             : Inspect.ClientRows(First, table, limit);
 
-    /// <summary>The replica a row of the grid belongs to and its id; archived rows are read-only.</summary>
-    private (ClientNode Node, Guid Id)? Live(RowView? r) =>
-        r is { IsArchived: false } && Agents.FirstOrDefault(a => a.Node.Agent.InstanceId == r.InstanceId) is { } a ? (a.Node, Guid.Parse(r.Id)) : null;
+    /// <summary>
+    /// The source a row of the grid belongs to and its id: the replica's node, or no node for the client's own row.
+    /// Archived rows are read-only.
+    /// </summary>
+    private (ClientNode? Node, Guid Id)? Live(RowView? r) =>
+        r is not { IsArchived: false } ? null
+        : r.InstanceId is null ? (Local is null ? null : (null, Guid.Parse(r.Id)))
+        : Agents.FirstOrDefault(a => a.Node.Agent.InstanceId == r.InstanceId) is { } a ? (a.Node, Guid.Parse(r.Id)) : null;
+
+    private LocalData Own => Local ?? throw new InvalidOperationException("у клієнта нема власних даних");
 
     private async Task Run(Func<Task> action)
     {
@@ -126,32 +151,38 @@ public sealed partial class ClientPanelViewModel : ObservableObject
 
     [RelayCommand]
     private Task Save() => Run(() => Live(SelectedItem) is { } x && long.TryParse(EditPrice, out long p)
-        ? x.Node.UpdateItemAsync(x.Id, EditName, p, EditStatus)
+        ? x.Node?.UpdateItemAsync(x.Id, EditName, p, EditStatus) ?? Own.UpdateItemAsync(x.Id, EditName, p, EditStatus)
         : Task.CompletedTask);
 
     [RelayCommand]
-    private Task Delete() => Run(() => Live(SelectedItem) is { } x ? x.Node.DeleteAsync("Item", x.Id) : Task.CompletedTask);
+    private Task Delete() => Run(() => Live(SelectedItem) is { } x ? x.Node?.DeleteAsync("Item", x.Id) ?? Own.DeleteAsync("Item", x.Id) : Task.CompletedTask);
 
     [RelayCommand]
-    private Task Archive() => Run(() => Live(SelectedItem) is { } x ? x.Node.ArchiveByIdAsync("Item", x.Id) : Task.CompletedTask);
+    private Task Archive() => Run(() => Live(SelectedItem) is { } x ? ArchiveAsync(x.Node, "Item", x.Id) : Task.CompletedTask);
+
+    /// <summary>The archive belongs to an owner's replica (11); the client's own rows have none.</summary>
+    private static Task ArchiveAsync(ClientNode? node, string table, Guid id) =>
+        node?.ArchiveByIdAsync(table, id) ?? throw new InvalidOperationException("власні дані не мають архіву: архів є тільки у реплік власників");
 
     [RelayCommand]
-    private Task AddItem() => Run(Target.Node.AddItemAsync);
+    private Task AddItem() => Run(() => Target.Agent?.Node.AddItemAsync() ?? Own.AddItemAsync());
 
     [RelayCommand]
-    private Task AddCategory() => Run(() => Target.Node.CreateCategoryAsync($"Категорія {Categories.Count + 1}"));
+    private Task AddCategory() => Run(() => Target.Agent?.Node.CreateCategoryAsync($"Категорія {Categories.Count + 1}") ?? Own.CreateCategoryAsync($"Моя категорія {Categories.Count + 1}"));
 
     [RelayCommand]
-    private Task DeleteCategory() => Run(() => Live(SelectedCategory) is { } x ? x.Node.DeleteAsync("Category", x.Id) : Task.CompletedTask);
+    private Task DeleteCategory() => Run(() => Live(SelectedCategory) is { } x ? x.Node?.DeleteAsync("Category", x.Id) ?? Own.DeleteAsync("Category", x.Id) : Task.CompletedTask);
 
     [RelayCommand]
-    private Task ArchiveCategory() => Run(() => Live(SelectedCategory) is { } x ? x.Node.ArchiveByIdAsync("Category", x.Id) : Task.CompletedTask);
+    private Task ArchiveCategory() => Run(() => Live(SelectedCategory) is { } x ? ArchiveAsync(x.Node, "Category", x.Id) : Task.CompletedTask);
 
-    /// <summary>One predicate action per owner: each replica deletes its own rows.</summary>
+    /// <summary>One predicate action per owner: each replica deletes its own rows; the client's own rows go locally.</summary>
     [RelayCommand]
     private Task DeleteArchived() => Run(async () =>
     {
         foreach (AgentViewModel a in Agents.Where(a => a.Node.Agent.InstanceId is not null))
             await a.Node.DeleteWhereStatusAsync("архів");
+        if (Local is not null)
+            await Local.DeleteWhereStatusAsync("архів");
     });
 }

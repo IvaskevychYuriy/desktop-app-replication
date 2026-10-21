@@ -67,7 +67,7 @@
                    Text="Байти на дроті: HTTP/2-кадри з gzip-стисненими повідомленнями gRPC, заголовками і пінгами, як їх бачить TCP-з'єднання клієнта." />
         <StackPanel Orientation="Horizontal" Spacing="6" IsVisible="{Binding ManyOwners}">
           <TextBlock Classes="muted" Text="нові записи до:" VerticalAlignment="Center" />
-          <ComboBox ItemsSource="{Binding Agents}" SelectedItem="{Binding Target}" MinWidth="160" />
+          <ComboBox ItemsSource="{Binding Targets}" SelectedItem="{Binding Target}" MinWidth="160" />
         </StackPanel>
         <TextBlock Text="{Binding Error}" Foreground="IndianRed" TextWrapping="Wrap" IsVisible="{Binding Error, Converter={x:Static ObjectConverters.IsNotNull}}" />
       </StackPanel>

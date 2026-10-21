@@ -69,6 +69,14 @@ public static class Inspect
         })];
     }
 
+    /// <summary>The client's own rows (<c>InstanceId</c> NULL): no owner, no outbox.</summary>
+    public static List<RowView> LocalRows(LocalData local, string table, int limit = 200, bool newestFirst = false)
+    {
+        SyncTable t = local.Replication.Model[table];
+        using SqliteConnection c = Open(local.Replication.Store.DbPath);
+        return ReadRows(c, t, "x.InstanceId IS NULL", limit, owner: false, newestFirst);
+    }
+
     private static List<RowView> ReadRows(SqliteConnection c, SyncTable t, string where, int limit, bool owner, bool newestFirst = false)
     {
         bool hasName = t.HasColumn("Name");

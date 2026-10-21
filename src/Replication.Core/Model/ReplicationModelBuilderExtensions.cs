@@ -57,7 +57,7 @@ public static class ReplicationModelBuilderExtensions
         p.Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Ignore);
     }
 
-    /// <summary>Sets the replica a new row belongs to on the client (an instance id, <c>local</c> or an archive).</summary>
+    /// <summary>Sets the replica a new row belongs to on the client (an instance id or an archive); the client's own rows keep NULL.</summary>
     public static void SetInstance(this EntityEntry entry, string instanceId) =>
         entry.Property(SyncColumns.InstanceId).CurrentValue = instanceId;
 
