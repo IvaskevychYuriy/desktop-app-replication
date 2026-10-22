@@ -680,6 +680,79 @@ public sealed class TwoOwnerCoreTests
         });
     }
 
+    [Test]
+    public async Task Snapshot_of_one_owner_replaces_its_replica_and_drops_its_outbox_and_leaves_the_rest_alone()
+    {
+        TwoOwnerRig rig = await StartSyncedAsync(SeedLocalAsync);
+        string a = Instance(rig.ToA);
+        string b = Instance(rig.ToB);
+        List<string> local = Local();
+        List<string> aReplica = Replica(a);
+        List<string> aState = OwnerState(rig.A);
+        Guid keys = rig.B.ItemId("Ключі");
+        Guid kettle = rig.B.ItemId("Чайник");
+        long keysPrice = (long)OwnerValue(rig.B, "Item", keys, "Price")!;
+
+        // Owner 2 moves on while the client is away from it; a deleted row leaves a tombstone for the purge to remove.
+        await TwoOwnerRig.GoOfflineAsync(rig.ToB);
+        await rig.B.SetPriceAsync("Чайник", 660);
+        Guid colander = await rig.B.NewItemAsync("Сито", "Кухня");
+        await rig.B.DeleteItemAsync("Шини");
+        await rig.B.AddLogAsync(5);
+
+        // The client edits a row of owner 2 and creates one for it: two actions wait in the outbox.
+        await EditItemAsync(keys, x => x.Price = 777);
+        var drone = new Item { Name = "Дрон", Price = 4200, Status = "новий", CategoryId = rig.B.CategoryId("Кухня") };
+        await using (SampleDbContext db = rig.Client.Db())
+        {
+            db.Items.Add(drone).SetInstance(b);
+            await db.SaveChangesAsync();
+        }
+        Assert.Multiple(() =>
+        {
+            Assert.That(Outbox(b), Has.Count.EqualTo(2));
+            Assert.That(ClientValue("Item", keys, "Price"), Is.EqualTo(777L));
+            Assert.That(ClientHas("Item", drone.Id), Is.True);
+        });
+
+        // A month later owner 2 forgets the silent client and purges the tombstone it never got: a snapshot is the only way back.
+        rig.B.Store.AdvanceClock(TimeSpan.FromDays(31));
+        Owner.OwnerStore.PurgeResult purged = rig.B.Store.Purge();
+        Assert.That(purged.PurgedVersion, Is.GreaterThan(rig.ToB.CursorOf("Item").Cursor));
+
+        rig.Client.ClearSteps();
+        await TwoOwnerRig.SyncNowAsync(rig.ToB);
+        await rig.SettleAsync();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(States(rig.B), Does.Contain(AgentState.Snapshot), "owner 2 sent the replica as a snapshot");
+            Assert.That(Sql.Scalar<long?>(rig.ClientPath, "SELECT snapshot_version FROM _sync_instances WHERE instance = @i", ("@i", b)), Is.Not.Null);
+            Assert.That(Instance(rig.ToB), Is.EqualTo(b), "the same owner instance");
+
+            // The client's own rows and the replica of owner 1 were not touched.
+            Assert.That(Local(), Is.EqualTo(local));
+            Assert.That(Replica(a), Is.EqualTo(aReplica));
+            Assert.That(OwnerState(rig.A), Is.EqualTo(aState));
+            Assert.That(States(rig.A), Is.Empty, "owner 1 saw no state change");
+            AssertConverged(rig.A, rig.ToA);
+
+            // The outbox of owner 2 was dropped, not sent.
+            Assert.That(Outbox(b), Is.Empty);
+            Assert.That(AppliedSeq(rig.B), Is.Zero, "owner 2 got no action");
+            Assert.That(OwnerValue(rig.B, "Item", keys, "Price"), Is.EqualTo(keysPrice), "the edit never reached the owner");
+            Assert.That(OwnerHas(rig.B, "Item", drone.Id), Is.False, "the created row never reached the owner");
+            Assert.That(ClientValue("Item", keys, "Price"), Is.EqualTo(keysPrice), "the replica shows the owner's value");
+            Assert.That(ClientHas("Item", drone.Id), Is.False);
+
+            // Everything owner 2 has is in the replica, including what changed while the client was away.
+            Assert.That(ClientValue("Item", kettle, "Price"), Is.EqualTo(660L));
+            Assert.That(ClientValue("Item", colander, SyncColumns.InstanceId), Is.EqualTo(b));
+            Assert.That((Count("Category", b), Count("Item", b), Count("Log", b)), Is.EqualTo((2L, 5L, 11L)));
+            AssertConverged(rig.B, rig.ToB);
+        });
+    }
+
     /// <summary>A row may point only to rows of its own source: a save that breaks it throws and writes nothing.</summary>
     [TestCase("own item under an owner category")]
     [TestCase("owner item under an own category")]

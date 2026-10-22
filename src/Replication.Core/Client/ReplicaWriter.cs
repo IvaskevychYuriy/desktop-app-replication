@@ -197,10 +197,11 @@ internal sealed class ReplicaWriter(SyncModel model, string instance)
 
     /// <summary>
     /// Merges a downloaded snapshot into the single client database (6.3, 10.3): rows of the instance are replaced in one
-    /// transaction and the outbox carries over with the values saved before the delete. A patch or delete for a row that
-    /// is not in the snapshot is dropped with a note (9.1).
+    /// transaction. The snapshot is the owner's whole database, so the outbox of the instance is dropped with the old rows:
+    /// pending actions were made against a state the snapshot replaces.
     /// </summary>
-    public static (string Instance, int Carried, List<string> Notes) InstallSnapshot(ClientStore store, string address, string path)
+    /// <returns>The instance id of the snapshot and the number of outbox actions dropped.</returns>
+    public static (string Instance, int Dropped) InstallSnapshot(ClientStore store, string address, string path)
     {
         using SqliteConnection c = store.Open(foreignKeys: false);
         c.Exec("ATTACH DATABASE @p AS snap", null, ("@p", path));
@@ -210,80 +211,26 @@ internal sealed class ReplicaWriter(SyncModel model, string instance)
             string newInst = c.Scalar<string>("SELECT instance_id FROM snap._sync_meta", tx)!;
             long v = c.Scalar<long>("SELECT version FROM snap._sync_meta", tx);
             string oldInst = ClientStore.InstanceOf(c, address, tx) ?? newInst;
-            var w = new ReplicaWriter(store.Model, newInst);
-            List<OutboxEntry> entries = ClientStore.Entries(c, tx, oldInst, pendingOnly: true);
-            c.Exec("DELETE FROM _sync_outbox WHERE instance = @i AND sent = 2", tx, ("@i", oldInst));
+            int dropped = (int)c.Scalar<long>("SELECT COUNT(*) FROM _sync_outbox WHERE instance IN (@old, @new) AND sent < 2", tx, ("@old", oldInst), ("@new", newInst));
+            c.Exec("DELETE FROM _sync_outbox WHERE instance IN (@old, @new)", tx, ("@old", oldInst), ("@new", newInst));
 
             foreach (SyncTable t in store.Model.Tables)
             {
                 string table = Q(t.Name);
                 string cols = string.Concat(t.Columns.Select(x => ", " + Q(x)));
-                c.Exec($"DROP TABLE IF EXISTS temp.\"_keep_{t.Name}\"", tx);
-                c.Exec($"""
-                    CREATE TEMP TABLE "_keep_{t.Name}" AS SELECT * FROM main.{table}
-                    WHERE InstanceId = @old AND Id IN (SELECT pk FROM _sync_outbox WHERE instance = @old AND tbl = @t AND kind IN (1, 2))
-                    """, tx, ("@old", oldInst), ("@t", t.Name));
                 c.Exec($"DELETE FROM main.{table} WHERE InstanceId IN (@old, @new)", tx, ("@old", oldInst), ("@new", newInst));
                 // INSERT OR IGNORE: an archived row with the same Id keeps its place in the archive.
                 c.Exec($"INSERT OR IGNORE INTO main.{table} (Id, InstanceId, SyncVersion{cols}) SELECT Id, @new, SyncVersion{cols} FROM snap.{table}", tx, ("@new", newInst));
             }
 
-            int carried = 0;
-            foreach (OutboxEntry e in entries)
-            {
-                if (!store.Model.TryGet(e.Table, out SyncTable? t))
-                    continue;
-                string table = Q(t.Name);
-                string keep = $"temp.\"_keep_{t.Name}\"";
-                switch (e.Kind)
-                {
-                    case OutboxKind.Create:
-                        string cols = string.Concat(t.Columns.Select(x => ", " + Q(x)));
-                        c.Exec($"INSERT OR REPLACE INTO main.{table} (Id, InstanceId, SyncVersion{cols}) SELECT Id, @new, 0{cols} FROM {keep} WHERE Id = @id", tx, ("@new", newInst), ("@id", e.Pk));
-                        carried++;
-                        break;
-                    case OutboxKind.Patch:
-                        if (c.Scalar<long>($"SELECT COUNT(*) FROM main.{table} WHERE Id = @id AND InstanceId = @new", tx, ("@id", e.Pk), ("@new", newInst)) == 0)
-                        {
-                            ClientStore.Remove(c, tx, e.Id);
-                            w.Note(c, tx, $"правку запису {Short(e.Pk!)} втрачено: його видалено на інстансі");
-                            break;
-                        }
-                        string set = string.Join(", ", e.Columns.Where(t.HasColumn).Select(x => $"{Q(x)} = (SELECT {Q(x)} FROM {keep} k WHERE k.Id = @id)"));
-                        if (set.Length > 0)
-                            c.Exec($"UPDATE main.{table} SET {set} WHERE Id = @id AND InstanceId = @new", tx, ("@id", e.Pk), ("@new", newInst));
-                        carried++;
-                        break;
-                    case OutboxKind.Delete:
-                        if (c.Exec($"DELETE FROM main.{table} WHERE Id = @id AND InstanceId = @new", tx, ("@id", e.Pk), ("@new", newInst)) == 0)
-                        {
-                            // Nothing to delete on the owner either.
-                            ClientStore.Remove(c, tx, e.Id);
-                        }
-
-                        carried++;
-                        break;
-                    case OutboxKind.PredicateDelete when Predicate.Parse(e.Predicate) is { } p:
-                        (string where, (string, object?)[] args) = p.ToSql(t);
-                        c.Exec($"DELETE FROM main.{table} WHERE InstanceId = @new AND SyncVersion <= @V AND {where}", tx, [("@new", newInst), ("@V", e.ExpectedVersion), .. args]);
-                        carried++;
-                        break;
-                }
-            }
-            foreach (SyncTable t in store.Model.Tables)
-                c.Exec($"DROP TABLE IF EXISTS temp.\"_keep_{t.Name}\"", tx);
-
             if (oldInst != newInst)
-            {
-                c.Exec("UPDATE _sync_outbox SET instance = @new WHERE instance = @old", tx, ("@new", newInst), ("@old", oldInst));
                 c.Exec("DELETE FROM _sync_cursors WHERE instance = @old; DELETE FROM _sync_ranges WHERE instance = @old;", tx, ("@old", oldInst));
-            }
             c.Exec("DELETE FROM _sync_ranges WHERE instance = @new", tx, ("@new", newInst));
             foreach (SyncTable t in store.Model.Tables)
                 ClientStore.SaveCursor(c, tx, newInst, t.Name, new CursorState(v));
             c.Exec("UPDATE _sync_instances SET instance = @new, snapshot_version = @v WHERE address = @a", tx, ("@new", newInst), ("@v", v), ("@a", address));
             tx.Commit();
-            return (newInst, carried, w.Notes);
+            return (newInst, dropped);
         }
         finally
         {

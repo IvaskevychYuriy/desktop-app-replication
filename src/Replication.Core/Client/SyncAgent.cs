@@ -15,7 +15,6 @@ public enum AgentState
 {
     Offline,
     Connecting,
-    Flushing,
     Snapshot,
     Catchup,
     Online,
@@ -748,18 +747,6 @@ public sealed class SyncAgent : IAsyncDisposable
 
     private async Task SnapshotFlowAsync(Sync.SyncClient client, SnapshotRequired sr, CancellationToken ct)
     {
-        // 1. The outbox goes first: Apply does not depend on the cursor.
-        if (_instance is not null && HasSendable())
-        {
-            SetState(AgentState.Flushing);
-            Log("потрібен знімок: спершу відправляю чергу дій");
-            while (HasSendable())
-            {
-                if (!await SendOnceAsync(client, ct))
-                    await Task.Delay(300, ct);
-            }
-        }
-
         SnapshotMode mode = Options.SnapshotMode;
         if (mode == SnapshotMode.Auto)
         {
@@ -780,7 +767,7 @@ public sealed class SyncAgent : IAsyncDisposable
         await _gate.WaitAsync(ct);
         try
         {
-            (string inst, int carried, List<string> notes) = ReplicaWriter.InstallSnapshot(_store, Address, path);
+            (string inst, int dropped) = ReplicaWriter.InstallSnapshot(_store, Address, path);
             _instance = inst;
             long cursor;
             lock (_cursorsLock)
@@ -789,9 +776,9 @@ public sealed class SyncAgent : IAsyncDisposable
                 cursor = _cursors.Values.First().Cursor;
             }
 
-            Log($"знімок перевірено і влито однією транзакцією: рядки InstanceId = {inst} замінено, курсори = {cursor}{(carried > 0 ? $", у нову репліку перенесено {carried} дій зі значеннями" : "")}", SyncLogLevel.Ok);
-            foreach (string n in notes)
-                Log(n, SyncLogLevel.Bad);
+            Log($"знімок перевірено і влито однією транзакцією: рядки InstanceId = {inst} замінено, курсори = {cursor}", SyncLogLevel.Ok);
+            if (dropped > 0)
+                Log($"черга дій на старій репліці відкинута: {dropped} дій не відправлено", SyncLogLevel.Bad);
         }
         finally
         {
@@ -833,12 +820,6 @@ public sealed class SyncAgent : IAsyncDisposable
             DataChanged?.Invoke(_store.Model.Tables.Select(t => t.Name).ToList());
             StatusChanged?.Invoke();
         }
-    }
-
-    private bool HasSendable()
-    {
-        using SqliteConnection c = _store.Open();
-        return c.Scalar<long>("SELECT COUNT(*) FROM _sync_outbox WHERE instance = @i AND sent IN (0, 1)", null, ("@i", _instance)) > 0;
     }
 
     /// <summary>Downloads the snapshot file, resuming from the same offset by snapshot_id after a break (6.3).</summary>
