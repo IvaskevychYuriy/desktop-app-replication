@@ -21,35 +21,24 @@ public static class OwnerHostingExtensions
             .AddHostedService<SyncHousekeepingJobsService>();
     }
 
-    /// <summary>Registers gRPC with the sync defaults; <paramref name="configure"/> runs after them.</summary>
-    public static IServiceCollection AddSyncGrpcService(this IServiceCollection services, Action<GrpcServiceOptions>? configure = null)
+    /// <summary>gRPC sync defaults</summary>
+    public static void ConfigureSyncGrpcServiceOptions(this GrpcServiceOptions o)
     {
-        services.AddGrpc(o =>
-        {
-            // Gzip: 3-5x on table data (6.1).
-            o.ResponseCompressionAlgorithm = "gzip";
-            o.ResponseCompressionLevel = CompressionLevel.Optimal;
-            o.MaxReceiveMessageSize = 32 * 1024 * 1024;
-            o.MaxSendMessageSize = 32 * 1024 * 1024;
-            o.EnableDetailedErrors = true;
-            configure?.Invoke(o);
-        });
-        return services;
+        // Gzip: 3-5x on table data (6.1).
+        o.ResponseCompressionAlgorithm = "gzip";
+        o.ResponseCompressionLevel = CompressionLevel.Optimal;
+        o.MaxReceiveMessageSize = 32 * 1024 * 1024;
+        o.MaxSendMessageSize = 32 * 1024 * 1024;
     }
 
-    /// <summary>HTTP/2 windows from <see cref="OwnerOptions"/> and keep-alive pings; <paramref name="configure"/> runs after them.</summary>
-    public static IServiceCollection AddSyncKestrelLimits(this IServiceCollection services, Action<KestrelServerLimits>? configure = null)
+    /// <summary>HTTP/2 windows and keep-alive pings</summary>
+    public static void ConfigureSyncKestrelServerOptions(this KestrelServerOptions k)
     {
-        services.AddOptions<KestrelServerOptions>().Configure<OwnerStore>((k, store) =>
-        {
-            OwnerOptions o = store.Options;
-            k.Limits.Http2.InitialStreamWindowSize = o.Http2StreamWindowBytes;
-            k.Limits.Http2.InitialConnectionWindowSize = o.Http2ConnectionWindowBytes;
-            k.Limits.Http2.KeepAlivePingDelay = TimeSpan.FromSeconds(20);
-            k.Limits.Http2.KeepAlivePingTimeout = TimeSpan.FromSeconds(20);
-            configure?.Invoke(k.Limits);
-        });
-        return services;
+        // HTTP/2 windows: at least bandwidth × RTT, ~1 MB for 2 Mbit/s and 3 s (6.1).</summary>
+        k.Limits.Http2.InitialStreamWindowSize = 1024 * 1024;
+        k.Limits.Http2.InitialConnectionWindowSize = 2 * 1024 * 1024;
+        k.Limits.Http2.KeepAlivePingDelay = TimeSpan.FromSeconds(20);
+        k.Limits.Http2.KeepAlivePingTimeout = TimeSpan.FromSeconds(20);
     }
 
     public static IEndpointRouteBuilder MapSyncGrpcService(this IEndpointRouteBuilder endpoints)

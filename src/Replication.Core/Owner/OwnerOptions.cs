@@ -34,11 +34,6 @@ public sealed class OwnerOptions
     /// <summary>Where VACUUM INTO writes snapshot files. Defaults to a folder next to the database.</summary>
     public string? SnapshotDirectory { get; set; }
 
-    /// <summary>HTTP/2 windows: at least bandwidth × RTT, ~1 MB for 2 Mbit/s and 3 s (6.1).</summary>
-    public int Http2StreamWindowBytes { get; set; } = 1024 * 1024;
-
-    public int Http2ConnectionWindowBytes { get; set; } = 2 * 1024 * 1024;
-
     public SyncLog Log { get; set; } = SyncLog.Null;
 
     /// <summary>Fault injection for demos and tests. Not used in production paths unless set.</summary>

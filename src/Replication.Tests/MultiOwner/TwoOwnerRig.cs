@@ -52,12 +52,19 @@ internal sealed class TestOwner : IAsyncDisposable
 
         WebApplicationBuilder builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();
-        builder.WebHost.ConfigureKestrel(k => k.Listen(System.Net.IPAddress.Loopback, 0, o => o.Protocols = HttpProtocols.Http2));
+        builder.WebHost.ConfigureKestrel(k =>
+        {
+            k.ConfigureSyncKestrelServerOptions();
+            k.Listen(System.Net.IPAddress.Loopback, 0, o => o.Protocols = HttpProtocols.Http2);
+        });
         builder.Services
             .AddSampleDb(dbPath)
             .AddOwnerServices(dbPath, model, options)
-            .AddSyncGrpcService()
-            .AddSyncKestrelLimits();
+            .AddGrpc(o =>
+            {
+                o.ConfigureSyncGrpcServiceOptions();
+                o.EnableDetailedErrors = true;
+            });
         WebApplication app = builder.Build();
         app.MapSyncGrpcService();
         app.Services.MigrateSampleDb().InstallOwnerStore();

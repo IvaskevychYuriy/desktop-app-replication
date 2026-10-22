@@ -36,6 +36,8 @@ public sealed class OwnerHost : IAsyncDisposable
         builder.Logging.ClearProviders();
         builder.WebHost.ConfigureKestrel(k =>
         {
+            k.ConfigureSyncKestrelServerOptions();
+
             // Plain HTTP/2 (h2c), no TLS in v1 (2).
             void Listen(ListenOptions o) => o.Protocols = HttpProtocols.Http2;
             if (listenAnywhere)
@@ -46,8 +48,11 @@ public sealed class OwnerHost : IAsyncDisposable
         builder.Services
             .AddSampleDb(dbPath)
             .AddOwnerServices(dbPath, model, options)
-            .AddSyncGrpcService()
-            .AddSyncKestrelLimits();
+            .AddGrpc(o =>
+            {
+                o.ConfigureSyncGrpcServiceOptions();
+                o.EnableDetailedErrors = true;
+            });
         WebApplication app = builder.Build();
         app.MapSyncGrpcService();
         app.Services.MigrateSampleDb().InstallOwnerStore();
