@@ -51,7 +51,7 @@ public sealed class HookUpTests
         using SampleDbContext db = SampleDbContext.Open(":memory:");
         SyncModel model = SyncModel.From(db);
 
-        Assert.That(model.Tables.Select(t => t.Name), Is.EqualTo(new[] { "Category", "Item", "Log" }));
+        Assert.That(model.Tables.Select(t => t.Name), Is.EqualTo(new[] { "Category", "Item", "Log", "StockObject" }));
         SyncTable item = model["Item"];
         // Bit i of SyncMask is Columns[i]: the key and the service columns are not data columns.
         Assert.That(item.Columns, Is.EqualTo(new[] { "CategoryId", "CreatedOn", "ModifiedOn", "Name", "Price", "Status" }));
@@ -84,7 +84,7 @@ public sealed class HookUpTests
             Assert.That(Rows.Triggers(path, t.Name), Is.EqualTo(new[] { $"_sync_{t.Name}_del", $"_sync_{t.Name}_ins", $"_sync_{t.Name}_upd" }));
         Assert.That(Rows.Scalar(path, "PRAGMA journal_mode"), Is.EqualTo("wal"));
         // No client yet: no floor holds the base back (5.2).
-        Assert.That(Rows.Scalar(path, $"SELECT COUNT(*) FROM _sync_floor WHERE floor = {OwnerStore.NoFloor}"), Is.EqualTo(3L));
+        Assert.That(Rows.Scalar(path, $"SELECT COUNT(*) FROM _sync_floor WHERE floor = {OwnerStore.NoFloor}"), Is.EqualTo(4L));
         // The version file outside the database guards against a restored backup (5.3).
         Assert.That(File.ReadAllText(path + ".syncstate"), Is.EqualTo($"{instance} 0"));
 

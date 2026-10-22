@@ -132,7 +132,8 @@ public sealed class SyncModel
             if (key.Properties.Count != 1 || key.Properties[0].ClrType != typeof(Guid) || key.Properties[0].GetColumnName(store) != SyncColumns.Key)
                 throw new NotSupportedException($"{tableName}: a replicated table needs a single Guid key column named Id (design 5.1).");
 
-            List<string> columns = et.GetProperties()
+            // Flattened: the members of complex types are columns of this table too (Settings_Description).
+            List<string> columns = et.GetFlattenedProperties()
                 .Where(p => !p.IsPrimaryKey())
                 .Select(p => p.GetColumnName(store)!)
                 .Where(c => !SyncColumns.s_all.Contains(c))

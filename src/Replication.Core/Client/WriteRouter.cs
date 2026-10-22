@@ -180,7 +180,7 @@ public sealed class WriteRouter(SyncModel model) : SaveChangesInterceptor
                         changes.Add(new Change(t, instance!, pk, OutboxKind.Create, []));
                         break;
                     case EntityState.Modified:
-                        List<string> cols = e.Properties.Where(p => p.IsModified).Select(p => p.Metadata.GetColumnName(store)!).Where(t.HasColumn).ToList();
+                        List<string> cols = ModifiedProperties(e).Where(p => p.IsModified).Select(p => p.Metadata.GetColumnName(store)!).Where(t.HasColumn).ToList();
                         if (cols.Count > 0)
                             changes.Add(new Change(t, instance!, pk, OutboxKind.Patch, cols));
                         break;
@@ -222,6 +222,29 @@ public sealed class WriteRouter(SyncModel model) : SaveChangesInterceptor
             throw;
         }
         return changes.Count == 0 ? null : new Pending(changes, moves, opened, own);
+    }
+
+    /// <summary>Properties of the entry, including the members of its complex properties at any depth.</summary>
+    private static IEnumerable<PropertyEntry> ModifiedProperties(EntityEntry e)
+    {
+        foreach (PropertyEntry p in e.Properties)
+            yield return p;
+        foreach (ComplexPropertyEntry c in e.ComplexProperties)
+        {
+            foreach (PropertyEntry p in Members(c))
+                yield return p;
+        }
+
+        static IEnumerable<PropertyEntry> Members(ComplexPropertyEntry c)
+        {
+            foreach (PropertyEntry p in c.Properties)
+                yield return p;
+            foreach (ComplexPropertyEntry n in c.ComplexProperties)
+            {
+                foreach (PropertyEntry p in Members(n))
+                    yield return p;
+            }
+        }
     }
 
     private static string PropertyOf(IEntityType et, string column, StoreObjectIdentifier store) =>

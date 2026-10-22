@@ -17,7 +17,10 @@ namespace Replication.Tests.MultiOwner;
 [TestFixture]
 public sealed class TwoOwnerCoreTests
 {
-    private static readonly string[] s_tables = ["Category", "Item", "Log"];
+    private static readonly string[] s_tables = ["Category", "Item", "Log", "StockObject"];
+
+    /// <summary>The tables the seed fills: an empty table sends nothing in a catch-up.</summary>
+    private static readonly string[] s_seeded = ["Category", "Item", "Log"];
     private readonly List<SyncLogEntry> _log = [];
     private TwoOwnerRig? _rig;
 
@@ -437,8 +440,8 @@ public sealed class TwoOwnerCoreTests
         List<string> b = rig.Client.Tables(rig.B, AgentState.Catchup);
         Assert.Multiple(() =>
         {
-            Assert.That(a, Is.SupersetOf(s_tables), "owner 1 sent every table");
-            Assert.That(b, Is.SupersetOf(s_tables), "owner 2 sent every table");
+            Assert.That(a, Is.SupersetOf(s_seeded), "owner 1 sent every table");
+            Assert.That(b, Is.SupersetOf(s_seeded), "owner 2 sent every table");
             // Owner 1: Log is open, so it goes first; Category and Item follow.
             Assert.That(a.FindLastIndex(t => t == "Log"), Is.LessThan(a.FindIndex(t => t is "Category" or "Item")), string.Join(", ", a));
             // Owner 2: Item is open and Category is its FK parent, so both go before Log.
@@ -471,8 +474,8 @@ public sealed class TwoOwnerCoreTests
         List<string> b = rig.Client.Tables(rig.B, AgentState.Catchup);
         Assert.Multiple(() =>
         {
-            Assert.That(a, Is.SupersetOf(s_tables), "owner 1 sent every table");
-            Assert.That(b, Is.SupersetOf(s_tables), "owner 2 sent every table");
+            Assert.That(a, Is.SupersetOf(s_seeded), "owner 1 sent every table");
+            Assert.That(b, Is.SupersetOf(s_seeded), "owner 2 sent every table");
             // Owner 2 switched to Log before Item was done.
             Assert.That(b.IndexOf("Log"), Is.LessThan(b.LastIndexOf("Item")), string.Join(", ", b));
             // Owner 1 kept Item first.
