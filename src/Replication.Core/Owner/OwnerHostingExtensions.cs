@@ -22,13 +22,16 @@ public static class OwnerHostingExtensions
     }
 
     /// <summary>gRPC sync defaults</summary>
-    public static void ConfigureSyncGrpcServiceOptions(this GrpcServiceOptions o)
+    public static IGrpcServerBuilder ConfigureSyncGrpcServiceOptions(this IGrpcServerBuilder builder)
     {
-        // Gzip: 3-5x on table data (6.1).
-        o.ResponseCompressionAlgorithm = "gzip";
-        o.ResponseCompressionLevel = CompressionLevel.Optimal;
-        o.MaxReceiveMessageSize = 32 * 1024 * 1024;
-        o.MaxSendMessageSize = 32 * 1024 * 1024;
+        return builder.AddServiceOptions<SyncGrpcService>(o =>
+        {
+            // Gzip: 3-5x on table data (6.1).
+            o.ResponseCompressionAlgorithm = "gzip";
+            o.ResponseCompressionLevel = CompressionLevel.Optimal;
+            o.MaxReceiveMessageSize = 32 * 1024 * 1024;
+            o.MaxSendMessageSize = 32 * 1024 * 1024;
+        });
     }
 
     /// <summary>HTTP/2 windows and keep-alive pings</summary>
@@ -41,16 +44,14 @@ public static class OwnerHostingExtensions
         k.Limits.Http2.KeepAlivePingTimeout = TimeSpan.FromSeconds(20);
     }
 
-    public static IEndpointRouteBuilder MapSyncGrpcService(this IEndpointRouteBuilder endpoints)
+    public static GrpcServiceEndpointConventionBuilder MapSyncGrpcService(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapGrpcService<SyncGrpcService>();
-        return endpoints;
+        return endpoints.MapGrpcService<SyncGrpcService>();
     }
 
     /// <summary>Call after the application's own migrations and before the host starts.</summary>
-    public static IServiceProvider InstallOwnerStore(this IServiceProvider services)
+    public static void InstallOwnerStore(this IServiceProvider services)
     {
         services.GetRequiredService<OwnerStore>().Install();
-        return services;
     }
 }

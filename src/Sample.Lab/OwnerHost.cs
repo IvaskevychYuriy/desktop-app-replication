@@ -50,9 +50,9 @@ public sealed class OwnerHost : IAsyncDisposable
             .AddOwnerServices(dbPath, model, options)
             .AddGrpc(o =>
             {
-                o.ConfigureSyncGrpcServiceOptions();
                 o.EnableDetailedErrors = true;
-            });
+            })
+            .ConfigureSyncGrpcServiceOptions();
         WebApplication app = builder.Build();
         app.MapSyncGrpcService();
         app.Services.MigrateSampleDb().InstallOwnerStore();
