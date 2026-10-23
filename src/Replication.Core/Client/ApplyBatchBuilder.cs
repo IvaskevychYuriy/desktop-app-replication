@@ -69,6 +69,7 @@ internal static class ApplyBatchBuilder
         {
             // Seq is given at the first send, so the owner always sees seq ascending (8.5).
             long seq = e.Seq ?? next++;
+            // An entry whose action is omitted (ToAction null) also gets seq and sent = 1; only a later applied_up_to_seq >= seq clears it.
             c.Exec("UPDATE _sync_outbox SET seq = @s, sent = 1 WHERE id = @id", tx, ("@s", seq), ("@id", e.Id));
             if (actions[e.Id] is { } a)
                 a.Seq = seq;

@@ -37,7 +37,7 @@ public static class OwnerHostingExtensions
     /// <summary>HTTP/2 windows and keep-alive pings</summary>
     public static void ConfigureSyncKestrelServerOptions(this KestrelServerOptions k)
     {
-        // HTTP/2 windows: at least bandwidth × RTT, ~1 MB for 2 Mbit/s and 3 s (6.1).</summary>
+        // HTTP/2 windows: at least bandwidth × RTT, ~1 MB for 2 Mbit/s and 3 s (6.1).
         k.Limits.Http2.InitialStreamWindowSize = 1024 * 1024;
         k.Limits.Http2.InitialConnectionWindowSize = 2 * 1024 * 1024;
         k.Limits.Http2.KeepAlivePingDelay = TimeSpan.FromSeconds(20);

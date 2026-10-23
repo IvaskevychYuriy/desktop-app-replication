@@ -96,8 +96,9 @@ public sealed class ConflictTests : LabTests
             Assert.That(lab.Diff(c), Is.Empty, c.Label);
     }
 
+    // Sequential on purpose: nothing here races, so no conflict rule applies; the concurrent cases are the tests above.
     [Test]
-    public async Task Two_clients_editing_the_same_row_in_turn_end_with_the_owners_state()
+    public async Task Edits_to_different_columns_of_one_row_by_two_clients_in_turn_all_reach_the_owner_without_conflict()
     {
         Lab lab = await StartSyncedAsync();
         Guid pallet = lab.ItemId("Палета");

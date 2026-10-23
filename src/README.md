@@ -4,9 +4,9 @@
 
 | Проєкт | Що це |
 |---|---|
-| `Replication.Core` | Ядро реплікації, яке можна скопіювати у свій проєкт. Без залежності від Avalonia. Власник (тригери, `SyncService`, Apply, знімок, очищення tombstones) і клієнт (одна БД з `InstanceId`, `_sync_outbox`, `WriteRouter`, `SyncAgent`), gRPC-контракт `Protos/sync.proto`, лічильник байтів на дроті. |
+| `Replication.Core` | Ядро реплікації, яке можна скопіювати у свій проєкт. Без залежності від Avalonia. Власник (тригери, gRPC-сервіс `SyncGrpcService`, Apply, знімок, очищення tombstones) і клієнт (одна БД з `InstanceId`, `_sync_outbox`, `WriteRouter`, `SyncAgent`), gRPC-контракт `Protos/sync.proto`, лічильник байтів на дроті. |
 | `Sample.Domain` | Модель прикладу: `BaseEntity` (Id, CreatedOn, ModifiedOn) і `Category`, `Item`, `LogEntry`, `StockObject` (з комплексним типом `ObjectSettings`). Сутності нічого не знають про синк. |
-| `Sample.Lab` | «Лабораторія»: власник і два клієнти в одному процесі, кожен зі своїм SQLite-файлом, справжній gRPC через localhost. Тут же 17 сценаріїв з демо-сторінки. `TwoOwnerLab`: два власники з різними початковими даними і один клієнт, під'єднаний до обох. |
+| `Sample.Lab` | «Лабораторія»: власник і два клієнти в одному процесі, кожен зі своїм SQLite-файлом, справжній gRPC через localhost. Тут же 18 сценаріїв з демо-сторінки (вільний режим без кроків і 17 зі кроками). `TwoOwnerLab`: два власники з різними початковими даними і один клієнт, під'єднаний до обох. |
 | `Sample.App` | Avalonia-додаток: лабораторія, окремо власник (з вікном або headless) і окремо клієнт. |
 | `Replication.Tests` | Усі сценарії демо-сторінки як тести на справжньому ядрі, плюс тести ядра за розділами дизайну (курсори і `_sync_floor`, Apply і відповіді на нього, WriteRouter, архів і FK, очищення tombstones, знімок, увімкнення синку на наявній БД, сесія Subscribe, порожня репліка) і view model панелі власника (посилається на `Sample.App`). NUnit. У `Integration/` інтеграційні тести з явними перевірками стану обох БД: підключення ядра до DbContext, версії і маски на власнику, знімок і потік до клієнта, запис з клієнта, конфлікти, перезапуски і відновлення, а також EF-міграція схеми (перебудова таблиці, нова колонка, нова таблиця) поверх працюючої реплікації, і один клієнт на двох власниках (`TwoOwnerTests`). |
 
@@ -68,8 +68,8 @@ dotnet tool restore && dotnet slopwatch analyze -d .. --fail-on warning
 
    ```csharp
    services.AddOwnerServices("owner.db", SyncModel.From(db), new OwnerOptions { Log = log });
-   services.AddSyncGrpcService();
-   services.AddSyncKestrelLimits();
+   services.AddGrpc().ConfigureSyncGrpcServiceOptions();     // ліміти повідомлень і стиснення gRPC
+   kestrel.ConfigureSyncKestrelServerOptions();              // у ConfigureKestrel, ліміти Kestrel
    app.MapSyncGrpcService();
    // ... міграції застосунку
    app.Services.InstallOwnerStore();                         // службові таблиці, тригери, файл версії
@@ -83,7 +83,7 @@ dotnet tool restore && dotnet slopwatch analyze -d .. --fail-on warning
    services.AddClientServices("client.db", SyncModel.From(db));   // ClientStore і WriteRouter, один раз на клієнта
    options.AddInterceptors(validation, router);                   // у DbContextOptions клієнта, WriteRouter з DI останнім
    // ... міграції застосунку
-   services.InstallClientStore();
+   app.Services.InstallClientStore();                             // IServiceProvider: службові таблиці клієнта
    var agent = new SyncAgent(store, "http://10.0.0.5:5005", "Склад"); // по одному на власника
    agent.Start();
    agent.LinkEnabled = true;
@@ -99,5 +99,11 @@ dotnet tool restore && dotnet slopwatch analyze -d .. --fail-on warning
 
 - **`_sync_outbox.pk`** може бути NULL: у дій за предикатом і перенесення в архів нема одного ключа.
 - **Розмір пачки досинхронізації** задається в рядках (`OwnerOptions.CatchupBatchRows`, 500 за замовчуванням), а не в байтах; лабораторія ставить 3 для сценаріїв з відрізками, як на демо-сторінці.
+- **Черга при новому знімку.** Знімок і `SkipSnapshotOnEmptyReplica` відкидають чергу інстансу (з повідомленням), а не переносять її (10.3).
+- **Зміна версії схеми** лише зупиняє агента в `SchemaMismatch`; знімок за нею не береться, курсори продовжуються.
+- **Перенесення в архів** йде набором ключів з замиканням по FK, а не предикатом; відповідь `Applied` несе `changed[]` і `children[]` замість `Rejected: changed`. За предикатом передається лише `DeleteWhereAsync`.
+- **`Progress`** власник шле один раз (`done`), а залишок змін це одне число `Batch.remaining`.
+- **Додатково до дизайну:** стани `Connecting` і `Duplicate` (один агент на інстанс у `ClientStore`), таблиці `_sync_notes` (повідомлення користувачу) і `_sync_columns` (перенумерація масок), колонка `_sync_meta.clock_offset`; `<БД>.syncstate` це файл версії з 5.3.
+- **Не реалізовано** (позначено в дизайні): маска `BLOB` для таблиць понад 63 колонки (комплексні типи розгортаються в колонки і теж рахуються), ліміт відрізків, ліміт байтів у польоті за BDP, мінімум ~64 КБ на пачку, послідовні знімки кількох інстансів, конфігурація шумних таблиць, перенесення в архів за предикатом, перехоплення `ExecuteUpdate`/`ExecuteDelete` у `WriteRouter` (він лише `SaveChangesInterceptor`), клас «масова» для імпорту, продовження знімка після перезапуску клієнта, відновлення з бекапу в самому додатку, тести лічильника 2³¹ і ліміту відрізків.
 
 Батько архівного рядка (11.6) і порожня таблиця в handshake (6.2) реалізовані за дизайном і покриті тестами `ArchiveParentTests` і `EmptyReplicaTests`.

@@ -74,7 +74,18 @@ public sealed class HookUpTests
         string path = Path.Combine(TestDb.NewDir(), "owner.db");
         SyncModel model = CreateDatabase(path);
         var store = new OwnerStore(path, model);
+        try
+        {
+            AssertOwnerInstall(path, model, store);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+        }
+    }
 
+    private static void AssertOwnerInstall(string path, SyncModel model, OwnerStore store)
+    {
         store.Install();
 
         string instance = store.InstanceId;
@@ -92,25 +103,36 @@ public sealed class HookUpTests
         Assert.That(store.InstanceId, Is.EqualTo(instance));
         foreach (SyncTable t in model.Tables)
             Assert.That(Rows.Triggers(path, t.Name), Has.Count.EqualTo(3));
-        SqliteConnection.ClearAllPools();
     }
 
     [Test]
-    public void Client_install_creates_the_client_tables_and_keeps_its_client_id_across_restarts()
+    public async Task Client_install_creates_the_client_tables_and_keeps_its_client_id_across_restarts()
     {
         string path = Path.Combine(TestDb.NewDir(), "client.db");
         SyncModel model = CreateDatabase(path);
-        var first = new ClientReplication(ClientReplication.BuildServices(path, model).InstallClientStore());
+        ClientReplication? first = null;
+        ClientReplication? second = null;
+        try
+        {
+            first = new ClientReplication(ClientReplication.BuildServices(path, model).InstallClientStore());
 
-        Assert.That(first.ClientId, Does.StartWith("cl-"));
-        Assert.That(Tables(path), Is.SupersetOf(new[] { "_sync_local", "_sync_instances", "_sync_cursors", "_sync_ranges", "_sync_outbox", "_sync_notes" }));
-        // Replica versions mirror the owner's, so the client has no sync triggers (5.4).
-        foreach (SyncTable t in model.Tables)
-            Assert.That(Rows.Triggers(path, t.Name), Is.Empty);
+            Assert.That(first.ClientId, Does.StartWith("cl-"));
+            Assert.That(Tables(path), Is.SupersetOf(new[] { "_sync_local", "_sync_instances", "_sync_cursors", "_sync_ranges", "_sync_outbox", "_sync_notes" }));
+            // Replica versions mirror the owner's, so the client has no sync triggers (5.4).
+            foreach (SyncTable t in model.Tables)
+                Assert.That(Rows.Triggers(path, t.Name), Is.Empty);
 
-        var second = new ClientReplication(ClientReplication.BuildServices(path, model).InstallClientStore());
-        Assert.That(second.ClientId, Is.EqualTo(first.ClientId));
-        SqliteConnection.ClearAllPools();
+            second = new ClientReplication(ClientReplication.BuildServices(path, model).InstallClientStore());
+            Assert.That(second.ClientId, Is.EqualTo(first.ClientId));
+        }
+        finally
+        {
+            if (second is not null)
+                await second.DisposeAsync();
+            if (first is not null)
+                await first.DisposeAsync();
+            SqliteConnection.ClearAllPools();
+        }
     }
 
     private static SyncModel CreateDatabase(string path)

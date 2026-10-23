@@ -29,6 +29,7 @@ public static class Wire
         string s => new Value { S = s },
         byte[] bytes => new Value { B = ByteString.CopyFrom(bytes) },
         Guid g => new Value { S = PkText(g) },
+        // Anything else (e.g. DateTime, decimal) goes as an invariant-culture string: no timezone or precision is carried beyond that text.
         _ => new Value { S = Convert.ToString(v, System.Globalization.CultureInfo.InvariantCulture) },
     };
 

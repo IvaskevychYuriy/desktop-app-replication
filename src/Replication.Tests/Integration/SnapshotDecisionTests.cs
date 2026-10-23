@@ -22,7 +22,7 @@ public sealed class SnapshotDecisionTests : LabTests
         Lab lab = await StartAsync();
 
         Assert.That((await FirstAnswerAsync(lab, skipSnapshotOnEmptyReplica: false)).BodyCase, Is.EqualTo(ChangeMessage.BodyOneofCase.SnapshotRequired));
-        Assert.That((await FirstAnswerAsync(lab, skipSnapshotOnEmptyReplica: true)).BodyCase, Is.Not.EqualTo(ChangeMessage.BodyOneofCase.SnapshotRequired));
+        Assert.That((await FirstAnswerAsync(lab, skipSnapshotOnEmptyReplica: true)).BodyCase, Is.EqualTo(ChangeMessage.BodyOneofCase.Batch), "catch-up from zero starts with data");
     }
 
     [Test]

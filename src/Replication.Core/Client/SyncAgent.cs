@@ -55,7 +55,7 @@ public sealed record AgentStatus(
     int Pending, int PendingDeletes, int InFlight, double? SnapshotProgress, string? LastError, IReadOnlyDictionary<string, string> Cursors);
 
 /// <summary>
-/// One per owner instance (4): offline → handshake → snapshot if needed → change stream (catch-up, then online),
+/// One per owner address (4); the instance it serves is learned from the owner's identity: offline → handshake → snapshot if needed → change stream (catch-up, then online),
 /// in parallel with sending the outbox. The client always initiates; it reconnects with exponential back-off.
 /// </summary>
 public sealed class SyncAgent : IAsyncDisposable
@@ -133,7 +133,7 @@ public sealed class SyncAgent : IAsyncDisposable
     /// <summary>Drop the next ApplyReply as if it was lost in the network (the demo's "lost reply").</summary>
     public bool LoseNextApplyReply { get; set; }
 
-    /// <summary>Outbox rows waiting for an archive retry (11.2, step 6).</summary>
+    /// <summary>Archive actions waiting for a retry, kept in memory (<c>_archiveRetry</c>), not outbox rows (11.2, step 6).</summary>
     public bool HasPendingArchiveWork => _archiveRetry.Count > 0;
 
     public CursorState CursorOf(string table)
@@ -230,6 +230,7 @@ public sealed class SyncAgent : IAsyncDisposable
         if (_instance is not null)
         {
             using SqliteConnection c = _store.Open();
+            // sent: 0 waiting, 1 in flight, 2 confirmed delete held for the cursor (< 2 = not done); kind 3 = Delete, 5 = PredicateDelete (OutboxKind).
             pending = (int)c.Scalar<long>("SELECT COUNT(*) FROM _sync_outbox WHERE instance = @i AND sent < 2", null, ("@i", _instance));
             deletes = (int)c.Scalar<long>("SELECT COUNT(*) FROM _sync_outbox WHERE instance = @i AND sent < 2 AND kind IN (3, 5)", null, ("@i", _instance));
             inflight = (int)c.Scalar<long>("SELECT COUNT(*) FROM _sync_outbox WHERE instance = @i AND sent = 1", null, ("@i", _instance));
@@ -432,6 +433,7 @@ public sealed class SyncAgent : IAsyncDisposable
                 _store.Release(_instance, this);
             if (_store.Claim(id, this) is var holder && holder != this)
             {
+                // Duplicate: the claim is held by another agent, so this one serves no instance (its Release must not touch the holder's claim).
                 _instance = null;
                 lock (_cursorsLock)
                     _cursors = NewCursors();
@@ -823,6 +825,7 @@ public sealed class SyncAgent : IAsyncDisposable
         try
         {
             (string inst, int dropped) = ReplicaWriter.InstallSnapshot(_store, path);
+            // NOTE: the snapshot's instance is taken as is: there is no _store.Claim here and no check against the instance adopted at the handshake.
             _instance = inst;
             long cursor;
             lock (_cursorsLock)
@@ -847,7 +850,7 @@ public sealed class SyncAgent : IAsyncDisposable
     }
 
     /// <summary>
-    /// Empties the replica of the instance and sets zero cursors: the data then arrives by catch-up, newest first (6.3).
+    /// Empties the replica rows of the instance (archives, <c>InstanceId</c> = "X:archive", stay) and sets zero cursors: the data then arrives by catch-up, newest first (6.3).
     /// The outbox goes with the old rows, as with a snapshot: its actions were made against the state that is replaced.
     /// </summary>
     private async Task ResetReplicaAsync(CancellationToken ct)

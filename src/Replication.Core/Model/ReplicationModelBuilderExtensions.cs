@@ -22,6 +22,7 @@ public static class ReplicationModelBuilderExtensions
     {
         foreach (IMutableEntityType et in modelBuilder.Model.GetEntityTypes().ToList())
         {
+            // Owned types live in their owner's table and the property bag is the shared-type entity: neither is a replicated table.
             if (et.IsOwned() || et.ClrType == typeof(Dictionary<string, object>))
                 continue;
             if (include is not null && !include(et.ClrType))

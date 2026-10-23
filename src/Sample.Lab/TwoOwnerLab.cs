@@ -111,6 +111,7 @@ public sealed class TwoOwnerLab : IAsyncDisposable
 
     private static bool IsQuiet(OwnerNode owner, ClientNode c)
     {
+        // Unlike Lab.IsQuiet, SchemaMismatch / Duplicate clients are not skipped here: they never become quiet.
         if (!c.Link)
             return true;
         AgentStatus s = c.Agent.GetStatus();

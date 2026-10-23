@@ -756,7 +756,7 @@ public sealed class TwoOwnerCoreTests
         });
     }
 
-    /// <summary>A row may point only to rows of its own source: a save that breaks it throws and writes nothing.</summary>
+    /// <summary>A row may point only to rows of its own source: a save that breaks it throws before any transaction opens, and writes nothing.</summary>
     [TestCase("own item under an owner category")]
     [TestCase("owner item under an own category")]
     [TestCase("own item moved to an owner category")]
@@ -791,7 +791,7 @@ public sealed class TwoOwnerCoreTests
 
         Assert.That(ClientState(), Is.EqualTo(client), "nothing was written, nothing was queued");
 
-        // The failed save left no transaction behind: the next ones go through, the owner's one reaches the owner.
+        // The failed save did not poison the connection: the next saves go through, the owner's one reaches the owner.
         await EditItemAsync(s_draft, x => x.Price = 11);
         await EditItemAsync(stapler, x => x.Price = 121);
         await rig.SettleAsync();

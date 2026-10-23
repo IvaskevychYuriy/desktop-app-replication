@@ -41,14 +41,20 @@ public sealed class AgentNameTests : LabTests
     {
         Lab lab = await StartAsync();
         ClientReplication replication = ClientNode.Create(Path.Combine(TestDb.NewDir(), "client.db"), new SyncLog());
-        await using SyncAgent agent = new(replication.Store, lab.Owner.Address, "клієнт");
+        try
+        {
+            await using SyncAgent agent = new(replication.Store, lab.Owner.Address, "клієнт");
 
-        agent.Start();
-        Assert.That(agent.InstanceId, Is.Null, "nobody asked the owner yet");
-        agent.LinkEnabled = true;
-        await Lab.WaitAsync(() => agent.GetStatus().State == AgentState.Online, TimeSpan.FromSeconds(30), "the agent did not get online");
+            agent.Start();
+            Assert.That(agent.InstanceId, Is.Null, "nobody asked the owner yet");
+            agent.LinkEnabled = true;
+            await Lab.WaitAsync(() => agent.GetStatus().State == AgentState.Online, TimeSpan.FromSeconds(30), "the agent did not get online");
 
-        Assert.That(agent.InstanceId, Is.EqualTo(lab.Owner.Store.InstanceId));
-        await replication.DisposeAsync();
+            Assert.That(agent.InstanceId, Is.EqualTo(lab.Owner.Store.InstanceId));
+        }
+        finally
+        {
+            await replication.DisposeAsync();
+        }
     }
 }

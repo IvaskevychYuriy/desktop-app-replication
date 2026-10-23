@@ -60,7 +60,7 @@ public sealed class RecoveryTests
 
         await StopClientAsync();
         await _owner!.SetPriceAsync("Палета", 470);
-        StartClient();
+        StartClient(link: false);
 
         // The agent learns who the owner is on the first link.
         Assert.That(_client.Agent.InstanceId, Is.Null);
@@ -231,7 +231,7 @@ public sealed class RecoveryTests
         SqliteConnection.ClearAllPools();
     }
 
-    private void StartClient()
+    private void StartClient(bool link = true)
     {
         var options = new AgentOptions
         {
@@ -240,7 +240,7 @@ public sealed class RecoveryTests
             ReconnectMax = TimeSpan.FromSeconds(1),
         };
         _client = ClientNode.Connect(ClientNode.Create(ClientPath, _syncLog), "клієнт", $"http://127.0.0.1:{_port}", options);
-        _client.Link = true;
+        _client.Link = link;
     }
 
     private async Task StopClientAsync()

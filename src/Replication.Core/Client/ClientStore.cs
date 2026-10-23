@@ -58,7 +58,6 @@ public sealed class ClientStore
     public string ConnectionString { get; }
     public string ClientId { get; private set; } = "";
 
-    /// <param name="foreignKeys">The agent applies batches with FK off: children may arrive before parents (7).</param>
     /// <summary>The agent that serves each instance: two agents on one replica would race on its rows, cursors and outbox (4).</summary>
     private readonly ConcurrentDictionary<string, SyncAgent> _holders = new(StringComparer.Ordinal);
 
@@ -67,6 +66,7 @@ public sealed class ClientStore
 
     internal void Release(string instance, SyncAgent agent) => _holders.TryRemove(new KeyValuePair<string, SyncAgent>(instance, agent));
 
+    /// <param name="foreignKeys">The agent applies batches with FK off: children may arrive before parents (7).</param>
     public SqliteConnection Open(bool foreignKeys = true)
     {
         var c = new SqliteConnection(ConnectionString);
@@ -82,12 +82,13 @@ public sealed class ClientStore
         c.Exec("PRAGMA journal_mode = WAL;");
         using SqliteTransaction tx = c.BeginTransaction();
         c.Exec("""
+            -- Key/value settings of this client (e.g. client_id), not "local rows" of the replica (those have InstanceId NULL).
             CREATE TABLE IF NOT EXISTS _sync_local (
               key   TEXT PRIMARY KEY,
               value TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS _sync_instances (
-              instance         TEXT PRIMARY KEY,   -- instance_id of the owner; the row appears with its first snapshot or empty replica
+              instance         TEXT PRIMARY KEY,   -- instance_id of the owner; the row appears when the agent adopts the instance (before any snapshot)
               snapshot_version INTEGER,
               next_seq         INTEGER NOT NULL DEFAULT 1
             );

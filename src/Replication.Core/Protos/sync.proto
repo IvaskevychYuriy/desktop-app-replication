@@ -81,7 +81,7 @@ message ChangeMessage {
     SnapshotRequired snapshot_required = 6;
     SchemaMismatch schema_mismatch = 7;
   }
-  reserved 8;
+  reserved 8;                        // was `Accepted accepted = 8`, removed: never reuse the number
 }
 
 message RangeExtra {
@@ -125,13 +125,13 @@ message Head {
 message Progress {
   int64 remaining = 1;
   bool done = 2;
-  int64 owner_time_unix = 3;
+  int64 owner_time_unix = 3;         // set by the owner; the client does not read it
 }
 
 message SnapshotRequired {
   string reason = 1;
   int64 size_bytes = 2;
-  string instance_id = 3;
+  string instance_id = 3;            // the instance that answers: equal to the client's one = refill it, other = the client adopts that owner on the next round
 }
 
 message SchemaMismatch {
@@ -152,7 +152,7 @@ message SnapshotChunk {
   int64 total_size = 3;
   bytes data = 4;
   int64 version = 5;
-  string instance_id = 6;
+  string instance_id = 6;            // the client does not read it: the instance comes from the snapshot's _sync_meta
   bytes sha256 = 7;                  // hash of the whole file, in every chunk
 }
 
@@ -205,7 +205,7 @@ message ActionResult {
   int64 version = 5;
   repeated RowRef changed = 6;       // not deleted: changed after V
   repeated RowRef children = 7;      // not deleted: has children that stay on the owner
-  int32 deleted = 8;
+  int32 deleted = 8;                 // rows removed by the action; the client does not read it
 }
 
 message ApplyReply {

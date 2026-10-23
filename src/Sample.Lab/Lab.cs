@@ -127,7 +127,7 @@ public sealed class Lab : IAsyncDisposable
 
     /// <summary>
     /// Waits until everything settles: no scheduled actions, every connected client online with an empty outbox,
-    /// cursors at the owner's head. A client stopped on a schema mismatch is skipped.
+    /// cursors at the owner's head. A client stopped on a schema mismatch or as a duplicate is skipped.
     /// </summary>
     public async Task SettleAsync(TimeSpan? timeout = null)
     {

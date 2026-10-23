@@ -6,15 +6,16 @@ using static Replication.Model.Wire;
 namespace Replication.Client;
 
 /// <summary>
-/// Applies what the owner sends to the rows of one instance (7). Every statement carries <c>InstanceId = X</c>,
-/// so the client's own rows (<c>InstanceId</c> NULL) and archives are never touched. Idempotent and order-independent: an older version never
+/// Applies what the owner sends to the rows of one instance (7). Writes carry <c>InstanceId = X</c>,
+/// so the client's own rows (<c>InstanceId</c> NULL) and archives are never touched (exceptions: the NeedFull probe in <c>ApplyRow</c>
+/// reads by Id only, and <c>InstallSnapshot</c> deletes rows of other instances by Id). Idempotent and order-independent: an older version never
 /// overwrites a newer one, and the outbox protects local edits.
 /// </summary>
 internal sealed class ReplicaWriter(SyncModel model, string instance)
 {
     public string Instance { get; } = instance;
 
-    /// <summary>Partial rows that arrived for a row the replica does not have (7).</summary>
+    /// <summary>Rows to request in full: partial rows that arrived for a row the replica does not have (7), reverted local edits (<see cref="Revert"/>) and archive leftovers.</summary>
     public List<RowRef> NeedFull { get; } = [];
 
     public List<string> Notes { get; } = [];
@@ -96,6 +97,7 @@ internal sealed class ReplicaWriter(SyncModel model, string instance)
             if (n == 0 && c.Scalar<string>($"SELECT InstanceId FROM {table} WHERE Id = @id", tx, ("@id", pk)) is null)
             {
                 // The owner believed we have the row: ask for it in full, never invent it.
+                // Also taken when a row with this Id exists with InstanceId NULL (own row): the probe is null in both cases.
                 NeedFull.Add(Ref(t.Name, pk));
             }
 
@@ -222,6 +224,7 @@ internal sealed class ReplicaWriter(SyncModel model, string instance)
                 // The snapshot wins over another instance's replica: a restored or cloned owner has the same Ids, and Id is the only key.
                 c.Exec($"DELETE FROM main.{table} WHERE InstanceId IS NOT NULL AND InstanceId <> @new AND InstanceId NOT LIKE '%:archive' AND Id IN (SELECT Id FROM snap.{table})", tx, ("@new", newInst));
                 // INSERT OR IGNORE: an archived row with the same Id keeps its place in the archive.
+                // Likewise a snapshot row whose Id collides with an own row (InstanceId NULL) is dropped: Id is the only key and own data wins.
                 c.Exec($"INSERT OR IGNORE INTO main.{table} (Id, InstanceId, SyncVersion{cols}) SELECT Id, @new, SyncVersion{cols} FROM snap.{table}", tx, ("@new", newInst));
             }
 
