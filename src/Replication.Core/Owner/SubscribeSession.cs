@@ -26,7 +26,6 @@ internal sealed class SubscribeSession
     private string _clientId = "";
     private string _who = "";
     private bool _online;
-    private bool _adopt;
     private long _sentUpTo;
     private long _catchupHead;
 
@@ -65,12 +64,6 @@ internal sealed class SubscribeSession
         try
         {
             Log($"Start прийнято, голова {head}; курсори {string.Join(", ", _mirror.Select(x => $"{x.Key}={x.Value}"))}", SyncLogLevel.Ok);
-            if (_adopt)
-            {
-                Log("репліки нема, skip_snapshot → Accepted, дані прийдуть потоком", SyncLogLevel.Ok);
-                await SendAsync(new ChangeMessage { Accepted = new Accepted { InstanceId = _store.InstanceId } }, _ct);
-            }
-
             _store.Committed += _wake.Set;
             reader = Task.Run(() => ReadLoopAsync(stop.Token));
             main = MainLoopAsync(conn, stop.Token);
@@ -103,9 +96,7 @@ internal sealed class SubscribeSession
             return null;
         }
 
-        // A client without a replica that asked for catch-up instead of a snapshot starts from zero cursors, whatever it sent.
-        _adopt = start.SkipSnapshot && string.IsNullOrEmpty(start.InstanceId);
-        Dictionary<string, CursorState> cursors = _adopt ? [] : start.Cursors.ToDictionary(c => c.Tbl, CursorState.FromWire);
+        Dictionary<string, CursorState> cursors = start.Cursors.ToDictionary(c => c.Tbl, CursorState.FromWire);
         List<(string Name, CursorState K)> states = Model.Tables.Select(t => (t.Name, K: cursors.GetValueOrDefault(t.Name) ?? new CursorState(0))).ToList();
         long head;
         string? reason = null;
@@ -118,17 +109,17 @@ internal sealed class SubscribeSession
             long minC = states.Select(x => x.K.Cursor).DefaultIfEmpty(0).Min();
             // A table that is still empty (cursor 0, no ranges) has no rows whose deletion it could miss, so forgotten
             // tombstones do not matter for it; this lets an empty replica (6.3) start after a purge (6.2).
-            (string Name, CursorState K) behind = states.FirstOrDefault(x => !(x.K.Cursor == 0 && x.K.Ranges.Count == 0) && x.K.Cursor < purged);
-            if (_adopt)
-                reason = null;
-            else if (string.IsNullOrEmpty(start.InstanceId))
-                reason = "репліки нема";
-            else if (start.InstanceId != _store.InstanceId)
+            static bool Empty(CursorState k) => k.Cursor == 0 && k.Ranges.Count == 0;
+            (string Name, CursorState K) behind = states.FirstOrDefault(x => !Empty(x.K) && x.K.Cursor < purged);
+            if (start.InstanceId != _store.InstanceId)
                 reason = "інший instance_id";
             else if (behind.Name is not null)
                 reason = $"курсор {behind.Name} {behind.K.Cursor} < purged_version {purged}";
             else if (minC > head)
                 reason = $"курсор {minC} > version {head}";
+            // A new replica takes a snapshot unless it asked for catch-up from zero; an owner without data has nothing to send in one.
+            else if (!start.SkipSnapshotOnEmptyReplica && head > 0 && states.All(x => Empty(x.K)))
+                reason = "репліки нема";
             if (reason is null)
             {
                 foreach ((string name, CursorState k) in states)
@@ -435,7 +426,7 @@ internal sealed class SubscribeSession
 
     private async Task SendAsync(ChangeMessage m, CancellationToken ct)
     {
-        if (_extra.Count > 0 && m.BodyCase is not (ChangeMessage.BodyOneofCase.SnapshotRequired or ChangeMessage.BodyOneofCase.SchemaMismatch or ChangeMessage.BodyOneofCase.Accepted))
+        if (_extra.Count > 0 && m.BodyCase is not (ChangeMessage.BodyOneofCase.SnapshotRequired or ChangeMessage.BodyOneofCase.SchemaMismatch))
         {
             m.Extra.AddRange(_extra);
             _extra.Clear();

@@ -3,10 +3,10 @@
 Status: plan only, not implemented. Supersedes the earlier "reorder only" variant.
 
 ## Context
-`CatchupStepAsync` takes work table by table in `PriorityTables()` order (`SubscribeSession.cs:219`): open tables and FK parents of open tables first. `OnlineStepAsync` takes the oldest `OnlineBatchRows` versions across all tables, so with a cap a closed table (e.g. `Log`) can fill the step while the open table (`Item`) waits. Goal: the cap is spent in priority order.
+`CatchupStepAsync` takes work table by table in `PriorityTables()` order (`PriorityTables()` in `SubscribeSession.cs`): open tables and FK parents of open tables first. `OnlineStepAsync` takes the oldest `OnlineBatchRows` versions across all tables, so with a cap a closed table (e.g. `Log`) can fill the step while the open table (`Item`) waits. Goal: the cap is spent in priority order.
 
 ## Why this is possible without a protocol change
-- Client already keeps a cursor per table and applies `Batch.Covers` per `b.Tbl` (`SyncAgent.cs:473`) and `ChangeMessage.Extra` for any table (`SyncAgent.cs:464`).
+- Client already keeps a cursor per table and applies `Batch.Covers` per `b.Tbl` and `ChangeMessage.Extra` for any table (both in the batch-apply code of `SyncAgent.cs`, `foreach (RangeExtra ...)` over `b.Covers` and `m.Extra`).
 - `Head(V)` is the only part that assumes one watermark: `LiftTo(V)` lifts every table that has no open ranges (`CursorState.LiftTo`). So `Head` must carry `V = min over tables of sent_t`, never more.
 - If each table's `Covers` starts exactly at that table's own `sent_t`, it touches the client cursor and merges, so no ranges build up in the online phase.
 
@@ -60,14 +60,14 @@ Known trade-off: a busy open table can use the whole budget every step and starv
 5. `Online_backlog_drains_without_new_writes`: one capped step, no more writes -> remaining batches still arrive (stall fix); lab client `Inspect.Diff` empty after `SettleAsync`.
 6. `Online_open_tables_change_applies_to_next_step`: `OpenTables [Log]` mid-stream flips priority.
 7. `Online_priority_keeps_origin_filter_and_throttle`: own-origin row not sent but range closed; two steps are at least `OnlineInterval` apart.
-9. `Online_head_is_min_of_table_progress`: in every step the `Head` value equals the minimum `upTo` over all tables and is never above any table's covered version.
-8. `Online_client_cursors_stay_without_ranges`: after drain, lab client `CursorOf(t).Ranges` empty for every table.
+8. `Online_head_is_min_of_table_progress`: in every step the `Head` value equals the minimum `upTo` over all tables and is never above any table's covered version.
+9. `Online_client_cursors_stay_without_ranges`: after drain, lab client `CursorOf(t).Ranges` empty for every table.
 
 Regression: `ScenarioTests` (`echo`, `columns`, `catchup`, `flow`, `delwins`), `OwnerToClientTests`, `RecoveryTests`.
 
 ## Scenario `openfirst` ("Пріоритет онлайн-змін")
-`Sample.Lab/Scenarios.cs`, picked up by `ScenarioTests.Ids`.
-- Setup: `OnlineBatchRows = 4`, `BothSynced`. Client 1 has `Item` open (default, `ClientNode.cs:40`).
+Not yet in `Sample.Lab/Scenarios.cs` (to be added there; `ScenarioTests.Ids` would pick it up).
+- Setup: `OnlineBatchRows = 4`, `BothSynced`. Client 1 has `Item` open (default: `ClientNode.Connect` calls `SetOpenTables(["Item"])`).
 - Step 1: `l.C2.Agent.SetOpenTables("Log")`.
 - Step 2: new `OwnerNode.MixedChangeAsync()`, one transaction: 4 Log entries, 3 Item price edits, 1 Category rename (Log versions are the oldest).
 - Expected: Client 1 first step = Category + 3 Item (cap 4), Log arrives in the next step. Client 2 first step = the 4 Log rows, Item and Category follow. Without priority both clients would get the Log rows first.

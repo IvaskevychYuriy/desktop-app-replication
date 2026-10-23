@@ -57,22 +57,78 @@ public sealed class RecoveryTests
         long snapshot = SnapshotVersion();
         await GoOfflineAsync();
         await _client.SetPriceAsync("Степлер", 150);
-        string cursors = _client.Agent.CursorOf("Item").ToString();
 
         await StopClientAsync();
         await _owner!.SetPriceAsync("Палета", 470);
-        StartClient();
+        StartClient(link: false);
 
-        // Before it connects, the restarted client already knows its instance, cursors and queued edit.
-        Assert.That(_client.Agent.InstanceId, Is.EqualTo(instance));
-        Assert.That(_client.Agent.CursorOf("Item").ToString(), Is.EqualTo(cursors));
-        Assert.That(_client.Outbox().Single().Columns, Does.Contain("Price"));
+        // The agent learns who the owner is on the first link.
+        Assert.That(_client.Agent.InstanceId, Is.Null);
 
         _client.Link = true;
+        await Lab.WaitAsync(() => _client.Agent.InstanceId is not null, TimeSpan.FromSeconds(30), "no Identity");
+        Assert.That(_client.Agent.InstanceId, Is.EqualTo(instance), "the owner's instance id found the replica");
         await SettleAsync();
         Assert.That(Inspect.OwnerItem(_owner, "Степлер")?.Price, Is.EqualTo(150));
         Assert.That(Inspect.Diff(_owner, _client), Is.Empty);
         Assert.That(SnapshotVersion(), Is.EqualTo(snapshot), "a catch-up, not a new snapshot");
+    }
+
+    [Test]
+    public async Task Another_owner_at_the_same_address_gets_its_own_replica_and_the_first_one_stays()
+    {
+        await StartOwnerAsync();
+        StartClient();
+        await SettleAsync();
+        string first = _owner!.Store.InstanceId;
+        int firstRows = Rows.All(ClientPath, "Item", first).Count;
+
+        // A new owner database answers at the same port while the agent keeps running.
+        await GoOfflineAsync();
+        await StopOwnerAsync();
+        foreach (string f in new[] { OwnerPath, OwnerPath + "-wal", OwnerPath + "-shm" })
+            File.Delete(f);
+        await StartOwnerAsync();
+        _client!.Link = true;
+        await SettleAsync();
+
+        Assert.That(_owner!.Store.InstanceId, Is.Not.EqualTo(first));
+        Assert.That(_client.Agent.InstanceId, Is.EqualTo(_owner.Store.InstanceId), "Identity told the agent who is at the address now");
+        Assert.That(Rows.All(ClientPath, "Item", first), Has.Count.EqualTo(firstRows), "the replica of the first owner is untouched");
+        Assert.That(Rows.Scalar(ClientPath, "SELECT COUNT(*) FROM _sync_instances"), Is.EqualTo(2L));
+        Assert.That(Inspect.Diff(_owner, _client), Is.Empty);
+    }
+
+    [Test]
+    public async Task Client_reconnects_to_the_same_owner_at_another_address_and_resumes_the_replica()
+    {
+        await StartOwnerAsync();
+        StartClient();
+        await SettleAsync();
+        string instance = _owner!.Store.InstanceId;
+        long snapshot = SnapshotVersion();
+        long cursor = _client!.Agent.CursorOf("Item").Cursor;
+        string oldAddress = _client.Agent.Address;
+        int snapshotsBefore = SnapshotRequests();
+
+        // The owner comes back on the same database at another port; the client learns the address from its app.
+        await StopClientAsync();
+        await StopOwnerAsync();
+        _port = 0;
+        await StartOwnerAsync();
+        await _owner!.SetPriceAsync("Палета", 470);
+        StartClient();
+        await SettleAsync();
+
+        Assert.That(_client!.Agent.Address, Is.Not.EqualTo(oldAddress));
+        Assert.That(_owner.Store.InstanceId, Is.EqualTo(instance));
+        Assert.That(_client.Agent.InstanceId, Is.EqualTo(instance), "the owner's instance id matched the row in _sync_instances");
+        Assert.That(Rows.Scalar(ClientPath, "SELECT COUNT(*) FROM _sync_instances"), Is.EqualTo(1L));
+        Assert.That(SnapshotVersion(), Is.EqualTo(snapshot), "a catch-up, not a new snapshot");
+        Assert.That(SnapshotRequests(), Is.EqualTo(snapshotsBefore));
+        Assert.That(_client.Agent.CursorOf("Item").Cursor, Is.GreaterThan(cursor), "resumed from the stored cursor and moved on");
+        Assert.That(Inspect.OwnerItem(_owner, "Палета")?.Price, Is.EqualTo(470));
+        Assert.That(Inspect.Diff(_owner, _client), Is.Empty);
     }
 
     [Test]
@@ -100,7 +156,7 @@ public sealed class RecoveryTests
     }
 
     [Test]
-    public async Task Owner_restored_from_a_backup_gets_a_new_instance_and_the_client_takes_a_snapshot_and_drops_its_outbox()
+    public async Task Owner_restored_from_a_backup_gets_a_new_instance_and_the_client_takes_a_snapshot_beside_the_old_replica()
     {
         await StartOwnerAsync();
         StartClient();
@@ -126,8 +182,9 @@ public sealed class RecoveryTests
         await SettleAsync();
 
         Assert.That(_client.Instance, Is.EqualTo(_owner.Store.InstanceId));
-        Assert.That(Rows.All(ClientPath, "Item", oldInstance), Is.Empty, "the old replica is gone");
-        Assert.That(Inspect.OwnerItem(_owner, "Степлер")?.Price, Is.Not.EqualTo(150), "the offline edit belonged to the old replica and is dropped");
+        Assert.That(Rows.All(ClientPath, "Item", oldInstance).Keys.Intersect(Rows.All(OwnerPath, "Item").Keys), Is.Empty, "the snapshot of the restored owner took over the rows with its Ids");
+        Assert.That(Inspect.OwnerItem(_owner, "Степлер")?.Price, Is.Not.EqualTo(150), "the offline edit belonged to the old replica and is never sent");
+        Assert.That(_client.Replication.Store.Entries(oldInstance), Has.Count.EqualTo(1), "kept with the old replica");
         Assert.That(_client.Outbox(), Is.Empty);
         Assert.That(Inspect.Diff(_owner, _client), Is.Empty);
     }
@@ -153,7 +210,7 @@ public sealed class RecoveryTests
         _client.Link = true;
         await SettleAsync();
 
-        Assert.That(SnapshotVersion(), Is.GreaterThan(snapshot), "SnapshotRequired, a new snapshot");
+        Assert.That(SnapshotVersion(), Is.GreaterThan(snapshot), "cursor behind purged_version, a new snapshot");
         Assert.That(Inspect.OwnerItem(_owner, "Палета")?.Price, Is.Not.EqualTo(470), "the offline edit belonged to the old replica and is dropped");
         Assert.That(_client.Outbox(), Is.Empty);
         Assert.That(Inspect.ClientHas(_client, "Скотч"), Is.False);
@@ -174,7 +231,7 @@ public sealed class RecoveryTests
         SqliteConnection.ClearAllPools();
     }
 
-    private void StartClient()
+    private void StartClient(bool link = true)
     {
         var options = new AgentOptions
         {
@@ -183,7 +240,7 @@ public sealed class RecoveryTests
             ReconnectMax = TimeSpan.FromSeconds(1),
         };
         _client = ClientNode.Connect(ClientNode.Create(ClientPath, _syncLog), "клієнт", $"http://127.0.0.1:{_port}", options);
-        _client.Link = true;
+        _client.Link = link;
     }
 
     private async Task StopClientAsync()
@@ -202,6 +259,12 @@ public sealed class RecoveryTests
     private Task SettleAsync() =>
         Lab.WaitAsync(() => _client!.Agent.GetStatus() is { State: AgentState.Online, Pending: 0 } && _client.Agent.MinCursor >= _owner!.Head(),
             TimeSpan.FromSeconds(30), "the client did not catch up with the owner");
+
+    private int SnapshotRequests()
+    {
+        lock (_log)
+            return _log.Count(l => l.Contains("→ Snapshot", StringComparison.Ordinal));
+    }
 
     private long SnapshotVersion() => (long)Rows.Scalar(ClientPath, "SELECT snapshot_version FROM _sync_instances")!;
 }

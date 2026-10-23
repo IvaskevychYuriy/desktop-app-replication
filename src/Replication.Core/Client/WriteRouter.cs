@@ -32,7 +32,7 @@ public sealed class WriteRouter(SyncModel model) : SaveChangesInterceptor
         IReadOnlyList<Change> Changes, IReadOnlyList<ArchiveMove> ArchiveMoves,
         bool OpenedConnection, IDbContextTransaction? OwnTransaction);
 
-    /// <summary>Raised after an outbox change commits, with the instance it belongs to; the agent wakes and sends.</summary>
+    /// <summary>Raised after the outbox change is written, with the instance it belongs to; the agent wakes and sends. When the application owns the outer transaction, this is before that transaction commits.</summary>
     public event Action<string>? OutboxChanged;
 
     /// <summary>Raised with a description of each outbox write, for the sample's event log.</summary>
@@ -180,7 +180,7 @@ public sealed class WriteRouter(SyncModel model) : SaveChangesInterceptor
                         changes.Add(new Change(t, instance!, pk, OutboxKind.Create, []));
                         break;
                     case EntityState.Modified:
-                        List<string> cols = e.Properties.Where(p => p.IsModified).Select(p => p.Metadata.GetColumnName(store)!).Where(t.HasColumn).ToList();
+                        List<string> cols = ModifiedProperties(e).Where(p => p.IsModified).Select(p => p.Metadata.GetColumnName(store)!).Where(t.HasColumn).ToList();
                         if (cols.Count > 0)
                             changes.Add(new Change(t, instance!, pk, OutboxKind.Patch, cols));
                         break;
@@ -192,6 +192,7 @@ public sealed class WriteRouter(SyncModel model) : SaveChangesInterceptor
                         // Archived rows point to it (directly or below): EF must not delete it, the cascade would take the archive (11.6).
                         if (model.ChildrenOf(t.Name).Any())
                         {
+                            // opened / own mark what this router opened or began, so only those are closed, committed or rolled back (Pending, catch).
                             if (ctx.Database.GetDbConnection().State != System.Data.ConnectionState.Open)
                             {
                                 ctx.Database.OpenConnection();
@@ -224,6 +225,29 @@ public sealed class WriteRouter(SyncModel model) : SaveChangesInterceptor
         return changes.Count == 0 ? null : new Pending(changes, moves, opened, own);
     }
 
+    /// <summary>All properties of the entry (not only modified ones; the caller filters by <c>IsModified</c>), including the members of its complex properties at any depth.</summary>
+    private static IEnumerable<PropertyEntry> ModifiedProperties(EntityEntry e)
+    {
+        foreach (PropertyEntry p in e.Properties)
+            yield return p;
+        foreach (ComplexPropertyEntry c in e.ComplexProperties)
+        {
+            foreach (PropertyEntry p in Members(c))
+                yield return p;
+        }
+
+        static IEnumerable<PropertyEntry> Members(ComplexPropertyEntry c)
+        {
+            foreach (PropertyEntry p in c.Properties)
+                yield return p;
+            foreach (ComplexPropertyEntry n in c.ComplexProperties)
+            {
+                foreach (PropertyEntry p in Members(n))
+                    yield return p;
+            }
+        }
+    }
+
     private static string PropertyOf(IEntityType et, string column, StoreObjectIdentifier store) =>
         et.GetProperties().First(p => p.GetColumnName(store) == column).Name;
 
@@ -248,6 +272,7 @@ public sealed class WriteRouter(SyncModel model) : SaveChangesInterceptor
         }
     }
 
+    // Display text for errors only: the client's own data has InstanceId NULL, there is no "local" value in the database.
     private static string SourceText(string? instance) => string.IsNullOrEmpty(instance) ? "local" : instance;
 
     /// <summary>The parent's <c>InstanceId</c>: from this save when the parent is in it, otherwise from the database.</summary>

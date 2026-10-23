@@ -7,7 +7,7 @@ using Sample.Lab;
 
 namespace Replication.Tests;
 
-/// <summary>Design 6.5: Apply on the owner, through the real gRPC path.</summary>
+/// <summary>Design 6.5: Apply on the owner, through the real gRPC path: here the unique-constraint rejections. Other branches are in ApplyHandlerBranchTests.</summary>
 public sealed class ApplyHandlerTests
 {
     [Test]

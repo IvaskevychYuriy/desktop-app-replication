@@ -48,7 +48,7 @@ public sealed partial class AgentViewModel : ObservableObject
     {
         Node = node;
         _selectedNetwork = Networks[0];
-        Owner = node.Agent.Name;
+        Owner = node.OwnerName;
         Prefix = showOwner ? Owner + ": " : "";
     }
 
@@ -98,7 +98,14 @@ public sealed partial class AgentViewModel : ObservableObject
 
     partial void OnSelectedNetworkChanged(NetworkChoice value) => Node.Agent.Network.CopyFrom(value.Profile);
 
-    partial void OnNewSchemaChanged(bool value) => Node.Agent.SetSchemaVersion(value ? 2 : 1);
+    /// <summary>The demo's app update: a new schema version; the link the agent turned off on SchemaMismatch goes on again.</summary>
+    partial void OnNewSchemaChanged(bool value)
+    {
+        bool mismatch = Node.Agent.GetStatus().State == AgentState.SchemaMismatch;
+        Node.Agent.SetSchemaVersion(value ? 2 : 1);
+        if (mismatch)
+            Node.Agent.LinkEnabled = true;
+    }
 
     public override string ToString() => Owner;
 
@@ -123,11 +130,15 @@ public sealed partial class AgentViewModel : ObservableObject
 
     private static (string, IBrush) Describe(AgentStatus s)
     {
+        // The agent turns the link off on these, the reason stays.
+        if (s.State == AgentState.SchemaMismatch)
+            return ("Оновіть додаток на інстансі або клієнті", Brushes.IndianRed);
+        if (s.State == AgentState.Duplicate)
+            return ($"Цей власник уже підключений: {s.LastError}", Brushes.IndianRed);
         if (!s.LinkEnabled)
             return (s.OfflineSince is { } t ? $"Нема зв'язку з {t:HH:mm:ss}" : "Нема зв'язку", Brushes.IndianRed);
         return s.State switch
         {
-            AgentState.SchemaMismatch => ("Оновіть додаток на інстансі або клієнті", Brushes.IndianRed),
             AgentState.Connecting => ("Start…", Brushes.SteelBlue),
             AgentState.Snapshot => ($"Завантаження, {s.SnapshotProgress ?? 0:P0}", Brushes.SteelBlue),
             AgentState.Catchup when s.LagWarning => ($"Канал не встигає: відстаємо на {s.Remaining} змін, росте", Brushes.IndianRed),

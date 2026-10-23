@@ -30,7 +30,7 @@ internal sealed class SnapshotStore(OwnerStore store)
 
     /// <summary>
     /// VACUUM INTO is a consistent copy as of the start of reading and does not block the writer.
-    /// In the same operation the client is registered with acked_version = V, so cleanup keeps the tombstones it needs next.
+    /// Right after it (a separate step, so cleanup could run in between) the client is registered with acked_version = V, so cleanup keeps the tombstones it needs next.
     /// </summary>
     public async Task<Snap> CreateAsync(string clientId, CancellationToken ct)
     {

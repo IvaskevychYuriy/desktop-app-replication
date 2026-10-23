@@ -45,6 +45,13 @@ public abstract class LabTests
             return [.. _log.Where(e => e.Source == "owner" && e.Text.StartsWith(who, StringComparison.Ordinal)).Select(e => e.Text[who.Length..])];
     }
 
+    /// <summary>Lines the agent of <paramref name="client"/> wrote.</summary>
+    protected List<string> ClientLog(ClientNode client)
+    {
+        lock (_log)
+            return [.. _log.Where(e => e.Source == client.Agent.Name).Select(e => e.Text)];
+    }
+
     [TearDown]
     public async Task StopLabAsync()
     {

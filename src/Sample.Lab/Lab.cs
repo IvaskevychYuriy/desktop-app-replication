@@ -127,7 +127,7 @@ public sealed class Lab : IAsyncDisposable
 
     /// <summary>
     /// Waits until everything settles: no scheduled actions, every connected client online with an empty outbox,
-    /// cursors at the owner's head. A client stopped on a schema mismatch is skipped.
+    /// cursors at the owner's head. A client stopped on a schema mismatch or as a duplicate is skipped.
     /// </summary>
     public async Task SettleAsync(TimeSpan? timeout = null)
     {
@@ -158,7 +158,7 @@ public sealed class Lab : IAsyncDisposable
             if (!c.Link)
                 continue;
             AgentStatus s = c.Agent.GetStatus();
-            if (s.State == AgentState.SchemaMismatch)
+            if (s.State is AgentState.SchemaMismatch or AgentState.Duplicate)
                 continue;
             if (s.State != AgentState.Online || s.Pending > 0 || c.Agent.HasPendingArchiveWork || c.Agent.MinCursor < head)
                 return false;

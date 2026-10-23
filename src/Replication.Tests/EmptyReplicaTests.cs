@@ -2,12 +2,13 @@ using Microsoft.EntityFrameworkCore;
 using NUnit.Framework;
 using Replication.Client;
 using Replication.Owner;
+using Replication.Tests.Integration;
 using Sample.Domain;
 using Sample.Lab;
 
 namespace Replication.Tests;
 
-/// <summary>Design 6.2, 6.3: a replica the owner can no longer catch up is replaced by an empty one that fills from the stream, and subscribers hear about it.</summary>
+/// <summary>Design 6.2, 6.3: with SkipSnapshotOnEmptyReplica a replica the owner can no longer catch up starts empty and fills from the stream, and subscribers hear about it. The flag-only cases are in SkipSnapshotOnEmptyReplicaTests.</summary>
 public sealed class EmptyReplicaTests
 {
     [Test]
@@ -18,47 +19,11 @@ public sealed class EmptyReplicaTests
         await lab.Owner.DeleteItemAsync("Маркери");
         // No clients yet: every tombstone goes, purged_version > 0.
         OwnerStore.PurgeResult purged = await lab.Owner.PurgeAsync();
-        Assert.That(purged.PurgedVersion > 0, Is.True);
+        Assert.That(purged.PurgedVersion, Is.GreaterThan(0));
 
-        lab.C2.Agent.Options.SnapshotMode = SnapshotMode.EmptyReplica;
+        lab.C2.Agent.Options.SkipSnapshotOnEmptyReplica = true;
         await lab.SyncNowAsync(lab.C2);
         await lab.SettleAsync();
-        Assert.That(Inspect.Diff(lab.Owner, lab.C2), Is.Empty);
-    }
-
-    [Test]
-    public async Task Skip_snapshot_without_a_replica_fills_from_the_stream_without_SnapshotRequired()
-    {
-        await using Lab lab = await Lab.StartAsync(configureOwner: o => o.CatchupBatchRows = 4);
-
-        lab.C2.Agent.Options.SkipSnapshot = true;
-        await lab.SyncNowAsync(lab.C2);
-        await lab.SettleAsync();
-
-        Assert.That(lab.C2.Instance, Is.EqualTo(lab.Owner.Store.InstanceId));
-        Assert.That(Inspect.Diff(lab.Owner, lab.C2), Is.Empty);
-    }
-
-    [Test]
-    public async Task Skip_snapshot_is_ignored_when_the_replica_cannot_be_caught_up()
-    {
-        await using Lab lab = await Lab.StartAsync();
-        await lab.SyncNowAsync(lab.C2);
-        await lab.SettleAsync();
-        await lab.GoOfflineAsync(lab.C2);
-
-        await using (SampleDbContext db = lab.Owner.Db())
-            await db.Log.ExecuteDeleteAsync(TestContext.CurrentContext.CancellationToken);
-        await lab.SettleAsync();
-        lab.Owner.AdvanceClock(TimeSpan.FromDays(31));
-        OwnerStore.PurgeResult purged = await lab.Owner.PurgeAsync();
-        Assert.That(purged.PurgedVersion > lab.C2.Agent.CursorOf("Log").Cursor, Is.True);
-
-        // The client has a replica, so the flag does not apply: the cursor is behind purged_version and the snapshot is taken.
-        lab.C2.Agent.Options.SkipSnapshot = true;
-        await lab.SyncNowAsync(lab.C2);
-        await lab.SettleAsync();
-
         Assert.That(Inspect.Diff(lab.Owner, lab.C2), Is.Empty);
     }
 
@@ -77,9 +42,9 @@ public sealed class EmptyReplicaTests
         await lab.SettleAsync();
         lab.Owner.AdvanceClock(TimeSpan.FromDays(31));
         OwnerStore.PurgeResult purged = await lab.Owner.PurgeAsync();
-        Assert.That(purged.PurgedVersion > lab.C2.Agent.CursorOf("Log").Cursor, Is.True);
+        Assert.That(purged.PurgedVersion, Is.GreaterThan(lab.C2.Agent.CursorOf("Log").Cursor));
 
-        lab.C2.Agent.Options.SnapshotMode = SnapshotMode.EmptyReplica;
+        lab.C2.Agent.Options.SkipSnapshotOnEmptyReplica = true;
         var seen = new HashSet<string>();
         lab.C2.Agent.DataChanged += tables =>
         {
@@ -90,7 +55,7 @@ public sealed class EmptyReplicaTests
         await lab.SettleAsync();
 
         lock (seen)
-            Assert.That(seen, Is.SubsetOf(lab.C2.Replication.Model.Tables.Select(t => t.Name).ToHashSet()));
+            Assert.That(seen, Is.EquivalentTo(lab.C2.Replication.Model.Tables.Select(t => t.Name).ToHashSet()));
         Assert.That(Inspect.Diff(lab.Owner, lab.C2), Is.Empty);
     }
 }

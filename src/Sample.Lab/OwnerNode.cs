@@ -128,6 +128,16 @@ public sealed class OwnerNode : IAsyncDisposable
         return it.Id;
     }
 
+    public async Task<Guid> NewStockObjectAsync(string name, string? description, int stockLevel)
+    {
+        await using SampleDbContext db = Db();
+        var o = new StockObject { Name = name, Settings = new ObjectSettings(description, stockLevel) };
+        db.StockObjects.Add(o);
+        await db.SaveChangesAsync();
+        Say($"створено об'єкт «{name}» (Settings: {description}, {stockLevel})");
+        return o.Id;
+    }
+
     /// <summary>ExecuteDelete path: the delete trigger writes the tombstone.</summary>
     public async Task DeleteItemAsync(string name)
     {

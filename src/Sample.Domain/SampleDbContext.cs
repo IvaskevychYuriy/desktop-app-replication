@@ -11,6 +11,7 @@ public sealed class SampleDbContext(DbContextOptions<SampleDbContext> options) :
     public DbSet<Category> Categories => Set<Category>();
     public DbSet<Item> Items => Set<Item>();
     public DbSet<LogEntry> Log => Set<LogEntry>();
+    public DbSet<StockObject> StockObjects => Set<StockObject>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -26,6 +27,11 @@ public sealed class SampleDbContext(DbContextOptions<SampleDbContext> options) :
             e.HasOne(x => x.Category).WithMany(x => x.Items).HasForeignKey(x => x.CategoryId).OnDelete(DeleteBehavior.Cascade);
         });
         b.Entity<LogEntry>(e => e.ToTable("Log"));
+        b.Entity<StockObject>(e =>
+        {
+            e.ToTable("StockObject");
+            e.Property(x => x.Name).IsRequired();
+        });
 
         // The only line the replication needs in the model: every BaseEntity is replicated.
         b.UseReplication(t => typeof(BaseEntity).IsAssignableFrom(t));

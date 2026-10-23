@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.Data.Sqlite;
 using Replication.Model;
 using static Replication.Model.Wire;
@@ -57,6 +58,14 @@ public sealed class ClientStore
     public string ConnectionString { get; }
     public string ClientId { get; private set; } = "";
 
+    /// <summary>The agent that serves each instance: two agents on one replica would race on its rows, cursors and outbox (4).</summary>
+    private readonly ConcurrentDictionary<string, SyncAgent> _holders = new(StringComparer.Ordinal);
+
+    /// <summary>Gives <paramref name="instance"/> to <paramref name="agent"/>; returns the agent that holds it, <paramref name="agent"/> itself on success.</summary>
+    internal SyncAgent Claim(string instance, SyncAgent agent) => _holders.GetOrAdd(instance, agent);
+
+    internal void Release(string instance, SyncAgent agent) => _holders.TryRemove(new KeyValuePair<string, SyncAgent>(instance, agent));
+
     /// <param name="foreignKeys">The agent applies batches with FK off: children may arrive before parents (7).</param>
     public SqliteConnection Open(bool foreignKeys = true)
     {
@@ -73,14 +82,13 @@ public sealed class ClientStore
         c.Exec("PRAGMA journal_mode = WAL;");
         using SqliteTransaction tx = c.BeginTransaction();
         c.Exec("""
+            -- Key/value settings of this client (e.g. client_id), not "local rows" of the replica (those have InstanceId NULL).
             CREATE TABLE IF NOT EXISTS _sync_local (
               key   TEXT PRIMARY KEY,
               value TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS _sync_instances (
-              address          TEXT PRIMARY KEY,   -- ip:port of the owner
-              instance         TEXT,               -- instance_id of the owner, NULL before the first snapshot
-              name             TEXT NOT NULL,
+              instance         TEXT PRIMARY KEY,   -- instance_id of the owner; the row appears when the agent adopts the instance (before any snapshot)
               snapshot_version INTEGER,
               next_seq         INTEGER NOT NULL DEFAULT 1
             );
@@ -128,14 +136,13 @@ public sealed class ClientStore
 
     // Instances.
 
-    public void EnsureInstance(string address, string name)
-    {
-        using SqliteConnection c = Open();
-        c.Exec("INSERT INTO _sync_instances(address, name) VALUES (@a, @n) ON CONFLICT(address) DO UPDATE SET name = @n", null, ("@a", address), ("@n", name));
-    }
+    public static bool HasInstance(SqliteConnection c, string instance, SqliteTransaction? tx = null) =>
+        c.Scalar<long>("SELECT COUNT(*) FROM _sync_instances WHERE instance = @i", tx, ("@i", instance)) > 0;
 
-    public static string? InstanceOf(SqliteConnection c, string address, SqliteTransaction? tx = null) =>
-        c.Scalar<string>("SELECT instance FROM _sync_instances WHERE address = @a", tx, ("@a", address));
+    /// <summary>The replica of an owner exists from here on; <c>next_seq</c> of an existing row is kept.</summary>
+    public static void SaveInstance(SqliteConnection c, SqliteTransaction tx, string instance, long? snapshotVersion) =>
+        c.Exec("INSERT INTO _sync_instances(instance, snapshot_version) VALUES (@i, @v) ON CONFLICT(instance) DO UPDATE SET snapshot_version = @v",
+            tx, ("@i", instance), ("@v", snapshotVersion));
 
     // Cursors.
 
