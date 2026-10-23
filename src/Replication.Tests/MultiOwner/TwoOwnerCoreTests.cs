@@ -12,7 +12,7 @@ namespace Replication.Tests.MultiOwner;
 /// Every check reads the database files with raw SQL: the client's rows per <c>InstanceId</c>, <c>_sync_instances</c>,
 /// <c>_sync_cursors</c>, <c>_sync_outbox</c>, <c>_sync_notes</c>; on the owners the rows, <c>_sync_meta</c>,
 /// <c>_sync_tombstones</c>, <c>_sync_clients</c> and <c>_sync_client_cursors</c>. Clients join by catch-up from zero cursors
-/// (<c>skip_snapshot</c>), no snapshots. The order of steps comes from the agents' <c>DataChanged</c> and state changes.
+/// (<c>skip_snapshot_on_empty_replica</c>), no snapshots. The order of steps comes from the agents' <c>DataChanged</c> and state changes.
 /// </summary>
 [TestFixture]
 public sealed class TwoOwnerCoreTests
@@ -61,7 +61,7 @@ public sealed class TwoOwnerCoreTests
 
     // Raw reads.
 
-    private static string Instance(SyncAgent agent) => agent.InstanceId ?? throw new InvalidOperationException($"{agent.Label}: no replica yet");
+    private static string Instance(SyncAgent agent) => agent.InstanceId ?? throw new InvalidOperationException($"{agent.Name}: no replica yet");
 
     private static string OwnerInstance(TestOwner o) => Sql.Scalar<string>(o.DbPath, "SELECT instance_id FROM _sync_meta")!;
 
@@ -133,7 +133,7 @@ public sealed class TwoOwnerCoreTests
         Sql.Scalar<long>(_rig!.ClientPath, "SELECT next_seq - 1 FROM _sync_instances WHERE instance = @i", ("@i", instance));
 
     private List<AgentState> States(TestOwner o) =>
-        [.. _rig!.Client.Steps.Where(s => s.Agent == o.Name && s.Table is null).Select(s => s.State)];
+        [.. _rig!.Client.Steps.Where(s => s.Agent == TestClient.AgentName(o) && s.Table is null).Select(s => s.State)];
 
     /// <summary>The replica equals the owner, the cursors on both sides are at the owner's head, nothing is queued.</summary>
     private void AssertConverged(TestOwner o, SyncAgent agent)
@@ -160,8 +160,7 @@ public sealed class TwoOwnerCoreTests
         TwoOwnerRig rig = await StartAsync();
         Assert.Multiple(() =>
         {
-            Assert.That(Sql.Lines(rig.ClientPath, "SELECT address, instance, snapshot_version FROM _sync_instances ORDER BY name"),
-                Is.EqualTo(new[] { $"{rig.A.Address}|∅|∅", $"{rig.B.Address}|∅|∅" }), "both owners registered, no replica yet");
+            Assert.That(Sql.Scalar<long>(rig.ClientPath, "SELECT COUNT(*) FROM _sync_instances"), Is.Zero, "the agents learn the owners on the first link");
             Assert.That(s_tables.Sum(t => Sql.Scalar<long>(rig.ClientPath, $"SELECT COUNT(*) FROM \"{t}\"")), Is.Zero, "the client starts empty");
         });
 
@@ -176,8 +175,8 @@ public sealed class TwoOwnerCoreTests
             Assert.That(a, Is.EqualTo(OwnerInstance(rig.A)));
             Assert.That(b, Is.EqualTo(OwnerInstance(rig.B)));
             Assert.That(a, Is.Not.EqualTo(b));
-            Assert.That(Sql.Lines(rig.ClientPath, "SELECT address, instance, snapshot_version FROM _sync_instances ORDER BY name"),
-                Is.EqualTo(new[] { $"{rig.A.Address}|{a}|∅", $"{rig.B.Address}|{b}|∅" }), "no snapshot was installed");
+            Assert.That(Sql.Lines(rig.ClientPath, "SELECT instance, snapshot_version FROM _sync_instances"),
+                Is.EquivalentTo(new[] { $"{a}|∅", $"{b}|∅" }), "no snapshot was installed");
             Assert.That((Count("Category", a), Count("Item", a), Count("Log", a)), Is.EqualTo((3L, 9L, 3L)));
             Assert.That((Count("Category", b), Count("Item", b), Count("Log", b)), Is.EqualTo((2L, 5L, 6L)));
             foreach (string t in s_tables)
@@ -350,10 +349,10 @@ public sealed class TwoOwnerCoreTests
         await rig.SettleAsync(TimeSpan.FromSeconds(60));
 
         List<Step> steps = [.. rig.Client.Steps];
-        List<Step> bSteps = [.. steps.Where(s => s.Agent == TwoOwnerRig.OwnerB)];
+        List<Step> bSteps = [.. steps.Where(s => s.Agent == TestClient.AgentName(rig.B))];
         DateTimeOffset firstCatchup = bSteps.First(s => s is { State: AgentState.Catchup, Table: not null }).At;
         DateTimeOffset online = bSteps.First(s => s is { State: AgentState.Online, Table: null }).At;
-        int aDuring = steps.Count(s => s is { Agent: TwoOwnerRig.OwnerA, State: AgentState.Online, Table: "Item" } && s.At > firstCatchup && s.At < online);
+        int aDuring = steps.Count(s => s is { State: AgentState.Online, Table: "Item" } && s.Agent == TestClient.AgentName(rig.A) && s.At > firstCatchup && s.At < online);
         Assert.Multiple(() =>
         {
             Assert.That(notOnline, Is.Empty, "owner 1 stayed online the whole time");
@@ -429,8 +428,8 @@ public sealed class TwoOwnerCoreTests
     {
         TwoOwnerRig rig = await StartAsync();
         await rig.A.AddLogAsync(6);
-        rig.ToA.SetOpenTables("Log");
-        rig.ToB.SetOpenTables("Item");
+        rig.ToA.SetOpenTables(["Log"]);
+        rig.ToB.SetOpenTables(["Item"]);
 
         rig.ToA.LinkEnabled = true;
         rig.ToB.LinkEnabled = true;
@@ -467,7 +466,7 @@ public sealed class TwoOwnerCoreTests
         rig.ToA.LinkEnabled = true;
         rig.ToB.LinkEnabled = true;
         await Wait.UntilAsync(() => rig.Client.Tables(rig.B, AgentState.Catchup).Contains("Item"), TimeSpan.FromSeconds(30), "owner 2 did not start on Item");
-        rig.ToB.SetOpenTables("Log");
+        rig.ToB.SetOpenTables(["Log"]);
         await rig.SettleAsync(TimeSpan.FromSeconds(60));
 
         List<string> a = rig.Client.Tables(rig.A, AgentState.Catchup);
@@ -724,6 +723,7 @@ public sealed class TwoOwnerCoreTests
         Assert.That(purged.PurgedVersion, Is.GreaterThan(rig.ToB.CursorOf("Item").Cursor));
 
         rig.Client.ClearSteps();
+        rig.ToB.Options.SkipSnapshotOnEmptyReplica = false;
         await TwoOwnerRig.SyncNowAsync(rig.ToB);
         await rig.SettleAsync();
 
@@ -848,13 +848,7 @@ public sealed class TwoOwnerCoreTests
         await rig.RestartClientAsync();
         Guid kettle = rig.B.ItemId("Чайник");
         await rig.B.SetPriceAsync("Чайник", 720);
-
-        Assert.Multiple(() =>
-        {
-            Assert.That(rig.Client.ClientId, Is.EqualTo(clientId), "the client id lives in the database");
-            Assert.That(rig.ToA.InstanceId, Is.EqualTo(a), "the agent found its replica by the owner's address");
-            Assert.That(rig.ToB.InstanceId, Is.EqualTo(b));
-        });
+        Assert.That(rig.Client.ClientId, Is.EqualTo(clientId), "the client id lives in the database");
 
         rig.ToA.LinkEnabled = true;
         rig.ToB.LinkEnabled = true;
@@ -862,12 +856,14 @@ public sealed class TwoOwnerCoreTests
 
         Assert.Multiple(() =>
         {
+            Assert.That(rig.ToA.InstanceId, Is.EqualTo(a), "the owner's instance id found the replica");
+            Assert.That(rig.ToB.InstanceId, Is.EqualTo(b));
             Assert.That(rig.Client.Tables(rig.A, AgentState.Catchup), Is.Empty, "owner 1 had nothing new");
             Assert.That(rig.Client.Tables(rig.B, AgentState.Catchup), Is.EqualTo(new[] { "Item" }), "owner 2 sent only the changed row");
             Assert.That(Replica(a), Is.EqualTo(aReplica));
             Assert.That(ClientCursors(a), Is.EqualTo(aCursors));
             Assert.That(ClientValue("Item", kettle, "Price"), Is.EqualTo(720L));
-            Assert.That(Sql.Lines(rig.ClientPath, "SELECT instance, snapshot_version FROM _sync_instances ORDER BY name"), Is.EqualTo(new[] { $"{a}|∅", $"{b}|∅" }));
+            Assert.That(Sql.Lines(rig.ClientPath, "SELECT instance, snapshot_version FROM _sync_instances"), Is.EquivalentTo(new[] { $"{a}|∅", $"{b}|∅" }));
             Assert.That(Sql.Lines(rig.B.DbPath, "SELECT client_id FROM _sync_clients"), Is.EqualTo(new[] { clientId }), "the same client, not a new one");
             AssertConverged(rig.A, rig.ToA);
             AssertConverged(rig.B, rig.ToB);

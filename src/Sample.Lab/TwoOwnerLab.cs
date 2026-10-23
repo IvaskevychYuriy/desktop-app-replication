@@ -7,7 +7,7 @@ namespace Sample.Lab;
 /// <summary>
 /// Two owners with different data and one client connected to both: one database, one agent per owner (4).
 /// Each owner writes the log under its own name (<see cref="OwnerA"/>, <see cref="OwnerB"/>) instead of "owner".
-/// The links start off; both agents ask for catch-up instead of a snapshot (<see cref="AgentOptions.SkipSnapshot"/>).
+/// The links start off; both agents ask for catch-up instead of a snapshot (<see cref="AgentOptions.SkipSnapshotOnEmptyReplica"/>).
 /// </summary>
 public sealed class TwoOwnerLab : IAsyncDisposable
 {
@@ -62,7 +62,7 @@ public sealed class TwoOwnerLab : IAsyncDisposable
 
         OwnerNode a = await Owner(OwnerA, "owner1.db", OwnerSeed.Default);
         OwnerNode b = await Owner(OwnerB, "owner2.db", OwnerSeed.Second);
-        AgentOptions Opt() => new AgentOptions { AckInterval = TimeSpan.FromMilliseconds(300), ApplyTimeout = TimeSpan.FromSeconds(15), LagWarningWindow = TimeSpan.FromSeconds(6), SkipSnapshot = true };
+        AgentOptions Opt() => new AgentOptions { AckInterval = TimeSpan.FromMilliseconds(300), ApplyTimeout = TimeSpan.FromSeconds(15), LagWarningWindow = TimeSpan.FromSeconds(6), SkipSnapshotOnEmptyReplica = true };
         ClientReplication client = ClientNode.Create(Path.Combine(dir, "client.db"), log);
         var local = new LocalData(client);
         if (localSeed is not null)

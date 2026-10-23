@@ -87,7 +87,7 @@ public sealed partial class ClientPanelViewModel : ObservableObject
     {
         string table = value switch { 1 => "Category", 2 => "Log", _ => "Item" };
         foreach (AgentViewModel a in Agents)
-            a.Node.Agent.SetOpenTables(table);
+            a.Node.Agent.SetOpenTables([table]);
     }
 
     partial void OnSelectedItemChanged(RowView? value)

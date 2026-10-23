@@ -78,9 +78,7 @@ public sealed class ClientStore
               value TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS _sync_instances (
-              address          TEXT PRIMARY KEY,   -- ip:port of the owner
-              instance         TEXT,               -- instance_id of the owner, NULL before the first snapshot
-              name             TEXT NOT NULL,
+              instance         TEXT PRIMARY KEY,   -- instance_id of the owner; the row appears with its first snapshot or empty replica
               snapshot_version INTEGER,
               next_seq         INTEGER NOT NULL DEFAULT 1
             );
@@ -128,14 +126,13 @@ public sealed class ClientStore
 
     // Instances.
 
-    public void EnsureInstance(string address, string name)
-    {
-        using SqliteConnection c = Open();
-        c.Exec("INSERT INTO _sync_instances(address, name) VALUES (@a, @n) ON CONFLICT(address) DO UPDATE SET name = @n", null, ("@a", address), ("@n", name));
-    }
+    public static bool HasInstance(SqliteConnection c, string instance, SqliteTransaction? tx = null) =>
+        c.Scalar<long>("SELECT COUNT(*) FROM _sync_instances WHERE instance = @i", tx, ("@i", instance)) > 0;
 
-    public static string? InstanceOf(SqliteConnection c, string address, SqliteTransaction? tx = null) =>
-        c.Scalar<string>("SELECT instance FROM _sync_instances WHERE address = @a", tx, ("@a", address));
+    /// <summary>The replica of an owner exists from here on; <c>next_seq</c> of an existing row is kept.</summary>
+    public static void SaveInstance(SqliteConnection c, SqliteTransaction tx, string instance, long? snapshotVersion) =>
+        c.Exec("INSERT INTO _sync_instances(instance, snapshot_version) VALUES (@i, @v) ON CONFLICT(instance) DO UPDATE SET snapshot_version = @v",
+            tx, ("@i", instance), ("@v", snapshotVersion));
 
     // Cursors.
 

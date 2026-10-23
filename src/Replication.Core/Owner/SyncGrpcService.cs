@@ -12,6 +12,9 @@ internal sealed class SyncGrpcService(OwnerStore store, SnapshotStore snapshots)
     public override Task Subscribe(IAsyncStreamReader<SubscribeMessage> requestStream, IServerStreamWriter<ChangeMessage> responseStream, ServerCallContext context) =>
         new SubscribeSession(store, requestStream, responseStream, context.CancellationToken).RunAsync();
 
+    public override Task<IdentityReply> Identity(IdentityRequest request, ServerCallContext context) =>
+        Task.FromResult(new IdentityReply { InstanceId = store.InstanceId });
+
     public override Task<ApplyReply> Apply(ApplyRequest request, ServerCallContext context)
     {
         ApplyReply reply = _apply.Apply(request);

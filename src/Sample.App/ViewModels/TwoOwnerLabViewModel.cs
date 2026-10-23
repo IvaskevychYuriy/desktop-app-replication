@@ -45,7 +45,7 @@ public sealed partial class TwoOwnerLabViewModel : ObservableObject
     public string Intro =>
         $"Один клієнт з власними даними ({Describe(LocalData.Seed)}; InstanceId NULL, власникам не йдуть) і два власники з різними даними: «{TwoOwnerLab.OwnerA}» ({Describe(OwnerSeed.Default)}) і «{TwoOwnerLab.OwnerB}» ({Describe(OwnerSeed.Second)}). "
         + "У клієнта по агенту на кожного власника, рядки кожного власника мають свій InstanceId в одній БД. Обидва зв'язки вимкнені: увімкніть їх, "
-        + "і клієнт досинхронізується без знімка (skip_snapshot), а далі отримує онлайн-зміни. Правка рядка йде тільки власнику, з якого рядок прийшов; "
+        + "і клієнт досинхронізується без знімка (skip_snapshot_on_empty_replica), а далі отримує онлайн-зміни. Правка рядка йде тільки власнику, з якого рядок прийшов; "
         + "власні рядки ніколи не потрапляють у чергу, і рядок може посилатися тільки на рядки свого джерела.";
 
     private static string Describe(OwnerSeed s) => $"категорій {s.Categories.Count}, товарів {s.Items.Count}, записів журналу {s.LogEntries}";

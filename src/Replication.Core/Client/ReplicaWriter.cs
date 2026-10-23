@@ -198,10 +198,11 @@ internal sealed class ReplicaWriter(SyncModel model, string instance)
     /// <summary>
     /// Merges a downloaded snapshot into the single client database (6.3, 10.3): rows of the instance are replaced in one
     /// transaction. The snapshot is the owner's whole database, so the outbox of the instance is dropped with the old rows:
-    /// pending actions were made against a state the snapshot replaces.
+    /// pending actions were made against a state the snapshot replaces. Rows of another instance with the same Ids (a restored
+    /// or cloned owner) are replaced too; its other rows, cursors and outbox stay, the app decides what to do with them.
     /// </summary>
     /// <returns>The instance id of the snapshot and the number of outbox actions dropped.</returns>
-    public static (string Instance, int Dropped) InstallSnapshot(ClientStore store, string address, string path)
+    public static (string Instance, int Dropped) InstallSnapshot(ClientStore store, string path)
     {
         using SqliteConnection c = store.Open(foreignKeys: false);
         c.Exec("ATTACH DATABASE @p AS snap", null, ("@p", path));
@@ -210,25 +211,24 @@ internal sealed class ReplicaWriter(SyncModel model, string instance)
             using SqliteTransaction tx = c.BeginTransaction();
             string newInst = c.Scalar<string>("SELECT instance_id FROM snap._sync_meta", tx)!;
             long v = c.Scalar<long>("SELECT version FROM snap._sync_meta", tx);
-            string oldInst = ClientStore.InstanceOf(c, address, tx) ?? newInst;
-            int dropped = (int)c.Scalar<long>("SELECT COUNT(*) FROM _sync_outbox WHERE instance IN (@old, @new) AND sent < 2", tx, ("@old", oldInst), ("@new", newInst));
-            c.Exec("DELETE FROM _sync_outbox WHERE instance IN (@old, @new)", tx, ("@old", oldInst), ("@new", newInst));
+            int dropped = (int)c.Scalar<long>("SELECT COUNT(*) FROM _sync_outbox WHERE instance = @new AND sent < 2", tx, ("@new", newInst));
+            c.Exec("DELETE FROM _sync_outbox WHERE instance = @new", tx, ("@new", newInst));
 
             foreach (SyncTable t in store.Model.Tables)
             {
                 string table = Q(t.Name);
                 string cols = string.Concat(t.Columns.Select(x => ", " + Q(x)));
-                c.Exec($"DELETE FROM main.{table} WHERE InstanceId IN (@old, @new)", tx, ("@old", oldInst), ("@new", newInst));
+                c.Exec($"DELETE FROM main.{table} WHERE InstanceId = @new", tx, ("@new", newInst));
+                // The snapshot wins over another instance's replica: a restored or cloned owner has the same Ids, and Id is the only key.
+                c.Exec($"DELETE FROM main.{table} WHERE InstanceId IS NOT NULL AND InstanceId <> @new AND InstanceId NOT LIKE '%:archive' AND Id IN (SELECT Id FROM snap.{table})", tx, ("@new", newInst));
                 // INSERT OR IGNORE: an archived row with the same Id keeps its place in the archive.
                 c.Exec($"INSERT OR IGNORE INTO main.{table} (Id, InstanceId, SyncVersion{cols}) SELECT Id, @new, SyncVersion{cols} FROM snap.{table}", tx, ("@new", newInst));
             }
 
-            if (oldInst != newInst)
-                c.Exec("DELETE FROM _sync_cursors WHERE instance = @old; DELETE FROM _sync_ranges WHERE instance = @old;", tx, ("@old", oldInst));
             c.Exec("DELETE FROM _sync_ranges WHERE instance = @new", tx, ("@new", newInst));
             foreach (SyncTable t in store.Model.Tables)
                 ClientStore.SaveCursor(c, tx, newInst, t.Name, new CursorState(v));
-            c.Exec("UPDATE _sync_instances SET instance = @new, snapshot_version = @v WHERE address = @a", tx, ("@new", newInst), ("@v", v), ("@a", address));
+            ClientStore.SaveInstance(c, tx, newInst, v);
             tx.Commit();
             return (newInst, dropped);
         }

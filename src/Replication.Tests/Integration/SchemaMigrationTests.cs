@@ -192,7 +192,7 @@ public sealed class SchemaMigrationTests
             ReconnectMin = TimeSpan.FromMilliseconds(200),
             ReconnectMax = TimeSpan.FromSeconds(1),
         };
-        _client.Connect($"http://127.0.0.1:{_port}", "Склад", options, "клієнт").LinkEnabled = true;
+        _client.Connect($"http://127.0.0.1:{_port}", "клієнт", options).LinkEnabled = true;
     }
 
     private async Task GoOfflineAsync()

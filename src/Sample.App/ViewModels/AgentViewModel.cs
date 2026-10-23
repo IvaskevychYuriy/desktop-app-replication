@@ -48,7 +48,7 @@ public sealed partial class AgentViewModel : ObservableObject
     {
         Node = node;
         _selectedNetwork = Networks[0];
-        Owner = node.Agent.Name;
+        Owner = node.OwnerName;
         Prefix = showOwner ? Owner + ": " : "";
     }
 

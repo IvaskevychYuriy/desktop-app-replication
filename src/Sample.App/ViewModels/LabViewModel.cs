@@ -252,6 +252,13 @@ public sealed partial class ClientWindowViewModel : ObservableObject
     {
         var log = new SyncLog();
         Feed.Attach(log);
+        Start(o, log);
+    }
+
+    public LogFeed Feed { get; } = new LogFeed();
+
+    private void Start(StartOptions o, SyncLog log)
+    {
         try
         {
             ClientNode node = ClientNode.Connect(ClientNode.Create(o.DbPath, log), o.Name, o.Connect);
@@ -266,6 +273,4 @@ public sealed partial class ClientWindowViewModel : ObservableObject
             State = "не вдалося запустити: " + e.Message;
         }
     }
-
-    public LogFeed Feed { get; } = new LogFeed();
 }

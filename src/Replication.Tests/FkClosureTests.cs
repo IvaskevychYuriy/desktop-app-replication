@@ -220,7 +220,7 @@ internal sealed class GraphPair : IAsyncDisposable
             db.Database.EnsureCreated();
         var client = new ClientReplication(ClientReplication.BuildServices(clientPath, model).InstallClientStore(), log);
         var pair = new GraphPair(owner, client, log);
-        client.Connect(owner.Address, "Власник", new AgentOptions { AckInterval = TimeSpan.FromMilliseconds(300) }, Label);
+        client.Connect(owner.Address, Label, new AgentOptions { AckInterval = TimeSpan.FromMilliseconds(300) });
         await pair.SyncAsync();
         return pair;
     }

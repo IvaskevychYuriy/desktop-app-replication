@@ -12,7 +12,7 @@ namespace Replication.Client;
 internal static class ApplyBatchBuilder
 {
     public static (ApplyRequest? Request, Dictionary<long, OutboxEntry> Sent) Build(
-        SqliteConnection c, SyncModel model, string clientId, string address, string instance, Func<int> applyBudget)
+        SqliteConnection c, SyncModel model, string clientId, string instance, Func<int> applyBudget)
     {
         using SqliteTransaction tx = c.BeginTransaction();
         List<OutboxEntry> all = ClientStore.Entries(c, tx, instance, pendingOnly: true)
@@ -63,7 +63,7 @@ internal static class ApplyBatchBuilder
             Add(e);
         }
 
-        long next = c.Scalar<long>("SELECT next_seq FROM _sync_instances WHERE address = @a", tx, ("@a", address));
+        long next = c.Scalar<long>("SELECT next_seq FROM _sync_instances WHERE instance = @i", tx, ("@i", instance));
         var sent = new Dictionary<long, OutboxEntry>();
         foreach (OutboxEntry e in batch)
         {
@@ -74,7 +74,7 @@ internal static class ApplyBatchBuilder
                 a.Seq = seq;
             sent[seq] = e with { Seq = seq, Sent = OutboxSendState.InFlight };
         }
-        c.Exec("UPDATE _sync_instances SET next_seq = @n WHERE address = @a", tx, ("@n", next), ("@a", address));
+        c.Exec("UPDATE _sync_instances SET next_seq = @n WHERE instance = @i", tx, ("@n", next), ("@i", instance));
         tx.Commit();
 
         var req = new ApplyRequest { ClientId = clientId };

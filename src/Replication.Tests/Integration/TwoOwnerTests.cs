@@ -10,7 +10,7 @@ namespace Replication.Tests.Integration;
 
 /// <summary>
 /// One client, two owners with different data (4): one database, rows of each owner under its own <c>InstanceId</c>,
-/// one agent and one change stream per owner. Clients join by catch-up from zero cursors (<c>skip_snapshot</c>), no snapshots.
+/// one agent and one change stream per owner. Clients join by catch-up from zero cursors (<c>skip_snapshot_on_empty_replica</c>), no snapshots.
 /// </summary>
 [TestFixture]
 public sealed partial class TwoOwnerTests
@@ -108,7 +108,7 @@ public sealed partial class TwoOwnerTests
             Assert.That(Rows.Scalar(lab.ToA.DbPath, "SELECT COUNT(*) FROM _sync_instances WHERE snapshot_version IS NULL"), Is.EqualTo(2L), "no snapshot was installed");
             foreach (string owner in new[] { TwoOwnerLab.OwnerA, TwoOwnerLab.OwnerB })
             {
-                Assert.That(SessionLog(owner), Has.Some.Contains("Accepted"), owner);
+                Assert.That(SessionLog(owner), Has.Some.Contains("Start прийнято"), owner);
                 Assert.That(SessionLog(owner), Has.None.Contains("SnapshotRequired"), owner);
                 // 3 rows a batch: more than one step per owner.
                 Assert.That(SessionLog(owner).Count(t => t.StartsWith("Batch ", StringComparison.Ordinal)), Is.GreaterThan(3), owner);
@@ -261,7 +261,7 @@ public sealed partial class TwoOwnerTests
         {
             Assert.That(Snapshot(lab.ToA.DbPath, lab.A.Store.Model, lab.ToA.Instance), Is.EqualTo(aReplica), "the replica of owner 1 is untouched");
             Assert.That(Outbox(lab.ToA), Is.EqualTo(aOutbox));
-            Assert.That(SessionLog(TwoOwnerLab.OwnerB), Has.Some.Contains("Accepted"));
+            Assert.That(LogOf(lab.ToB.Label).Select(e => e.Text), Has.None.Contains("→ Snapshot"));
             Assert.That(SessionLog(TwoOwnerLab.OwnerB), Has.None.Contains("SnapshotRequired"));
             Assert.That(SessionLog(TwoOwnerLab.OwnerB), Has.None.Contains("Apply"));
             Assert.That(Inspect.Diff(lab.B, lab.ToB), Is.Empty);
@@ -288,8 +288,8 @@ public sealed partial class TwoOwnerTests
     {
         TwoOwnerLab lab = await StartAsync();
         await lab.A.AddLogAsync(6);
-        lab.ToA.Agent.SetOpenTables("Log");
-        lab.ToB.Agent.SetOpenTables("Item");
+        lab.ToA.Agent.SetOpenTables(["Log"]);
+        lab.ToB.Agent.SetOpenTables(["Item"]);
 
         lab.ToA.Link = true;
         lab.ToB.Link = true;
@@ -323,7 +323,7 @@ public sealed partial class TwoOwnerTests
         lab.ToA.Link = true;
         lab.ToB.Link = true;
         await Lab.WaitAsync(() => CatchupTables(TwoOwnerLab.OwnerB).Contains("Item"), TimeSpan.FromSeconds(30), "owner 2 did not start on Item");
-        lab.ToB.Agent.SetOpenTables("Log");
+        lab.ToB.Agent.SetOpenTables(["Log"]);
         await lab.SettleAsync(TimeSpan.FromSeconds(60));
 
         List<string> a = CatchupTables(TwoOwnerLab.OwnerA);

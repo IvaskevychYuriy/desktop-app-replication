@@ -216,10 +216,10 @@ internal sealed class TestClient : IAsyncDisposable
             AckInterval = TimeSpan.FromMilliseconds(300),
             ApplyTimeout = TimeSpan.FromSeconds(15),
             LagWarningWindow = TimeSpan.FromSeconds(6),
-            SkipSnapshot = true,
+            SkipSnapshotOnEmptyReplica = true,
         };
-        var agent = new SyncAgent(Store, owner.Address, owner.Name, options, _log, $"клієнт → {owner.Name}");
-        agent.SetOpenTables("Item");
+        var agent = new SyncAgent(Store, owner.Address, AgentName(owner), options, _log);
+        agent.SetOpenTables(["Item"]);
         AgentState last = AgentState.Offline;
         agent.StatusChanged += () =>
         {
@@ -251,8 +251,10 @@ internal sealed class TestClient : IAsyncDisposable
     }
 
     /// <summary>Tables applied by the agent of <paramref name="owner"/> in <paramref name="state"/>, in order.</summary>
+    public static string AgentName(TestOwner owner) => $"клієнт → {owner.Name}";
+
     public List<string> Tables(TestOwner owner, AgentState state) =>
-        [.. Steps.Where(s => s.Agent == owner.Name && s.State == state && s.Table is not null).Select(s => s.Table!)];
+        [.. Steps.Where(s => s.Agent == AgentName(owner) && s.State == state && s.Table is not null).Select(s => s.Table!)];
 
     /// <summary>The application's DbContext with the WriteRouter, as the UI would use it.</summary>
     public SampleDbContext Db() => _services.GetRequiredService<IDbContextFactory<SampleDbContext>>().CreateDbContext();
@@ -342,13 +344,13 @@ internal sealed class TwoOwnerRig : IAsyncDisposable
     public static Task SyncNowAsync(SyncAgent agent, TimeSpan? timeout = null)
     {
         agent.LinkEnabled = true;
-        return Wait.UntilAsync(() => agent.GetStatus().State == AgentState.Online, timeout ?? TimeSpan.FromSeconds(30), $"{agent.Label}: not online");
+        return Wait.UntilAsync(() => agent.GetStatus().State == AgentState.Online, timeout ?? TimeSpan.FromSeconds(30), $"{agent.Name}: not online");
     }
 
     public static Task GoOfflineAsync(SyncAgent agent)
     {
         agent.LinkEnabled = false;
-        return Wait.UntilAsync(() => agent.GetStatus().State == AgentState.Offline, TimeSpan.FromSeconds(30), $"{agent.Label}: not offline");
+        return Wait.UntilAsync(() => agent.GetStatus().State == AgentState.Offline, TimeSpan.FromSeconds(30), $"{agent.Name}: not offline");
     }
 
     /// <summary>
@@ -363,7 +365,7 @@ internal sealed class TwoOwnerRig : IAsyncDisposable
         while (quiet < 3)
         {
             if (DateTimeOffset.UtcNow > until)
-                throw new TimeoutException("not settled: " + string.Join("; ", Pairs.Select(p => $"{p.Agent.Label}: {p.Agent.GetStatus().State}, cursor {p.Agent.MinCursor}, head {p.Owner.Head()}")));
+                throw new TimeoutException("not settled: " + string.Join("; ", Pairs.Select(p => $"{p.Agent.Name}: {p.Agent.GetStatus().State}, cursor {p.Agent.MinCursor}, head {p.Owner.Head()}")));
             quiet = Pairs.All(p => IsQuiet(p.Owner, p.Agent)) ? quiet + 1 : 0;
             await tick.WaitForNextTickAsync();
         }

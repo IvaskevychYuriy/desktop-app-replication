@@ -14,9 +14,10 @@ namespace Sample.Lab;
 /// <remarks>The <see cref="ClientReplication"/> owns the agents: dispose it, not the nodes.</remarks>
 public sealed class ClientNode
 {
-    private ClientNode(string label, string dbPath, ClientReplication replication, SyncAgent agent, SyncLog log)
+    private ClientNode(string label, string ownerName, string dbPath, ClientReplication replication, SyncAgent agent, SyncLog log)
     {
         Label = label;
+        OwnerName = ownerName;
         DbPath = dbPath;
         Replication = replication;
         Agent = agent;
@@ -24,6 +25,10 @@ public sealed class ClientNode
     }
 
     public string Label { get; }
+
+    /// <summary>The owner's name, as the client knows it.</summary>
+    public string OwnerName { get; }
+
     public string DbPath { get; }
     public ClientReplication Replication { get; }
     public SyncAgent Agent { get; }
@@ -43,9 +48,9 @@ public sealed class ClientNode
     /// <summary>Connects the client to one more owner: the same database and WriteRouter, a new agent (4).</summary>
     public static ClientNode Connect(ClientReplication replication, string label, string ownerAddress, AgentOptions? options = null, string ownerName = "Власник")
     {
-        SyncAgent agent = replication.Connect(ownerAddress, ownerName, options, label);
-        agent.SetOpenTables("Item");
-        return new ClientNode(label, replication.Store.DbPath, replication, agent, replication.Log);
+        SyncAgent agent = replication.Connect(ownerAddress, label, options);
+        agent.SetOpenTables(["Item"]);
+        return new ClientNode(label, ownerName, replication.Store.DbPath, replication, agent, replication.Log);
     }
 
     public bool Link

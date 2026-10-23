@@ -37,7 +37,7 @@ public sealed class ClientReplication : IAsyncDisposable
         Router.Routed += (instance, text) =>
         {
             SyncAgent? agent = Agents.FirstOrDefault(a => a.InstanceId == instance);
-            _log.Write(agent?.Label ?? instance, text);
+            _log.Write(agent?.Name ?? instance, text);
         };
     }
 
@@ -71,9 +71,13 @@ public sealed class ClientReplication : IAsyncDisposable
         return services.BuildServiceProvider();
     }
 
-    public SyncAgent Connect(string address, string name, AgentOptions? options = null, string? label = null)
+    /// <summary>
+    /// Starts an agent for the owner at <paramref name="address"/> (link off). The agent learns the owner's instance id on
+    /// the first link, and <see cref="SyncAgent.InstanceId"/> stays null until then.
+    /// </summary>
+    public SyncAgent Connect(string address, string name, AgentOptions? options = null)
     {
-        var agent = new SyncAgent(Store, address, name, options, _log, label);
+        var agent = new SyncAgent(Store, address, name, options, _log);
         lock (_agents)
             _agents.Add(agent);
         agent.Start();
