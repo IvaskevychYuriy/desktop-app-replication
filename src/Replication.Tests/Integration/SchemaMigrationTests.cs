@@ -120,6 +120,7 @@ public sealed class SchemaMigrationTests
         // The client still runs version 1: SchemaMismatch, nothing sent, the outbox kept (6.2).
         Agent.LinkEnabled = true;
         await Lab.WaitAsync(() => Agent.GetStatus().State == AgentState.SchemaMismatch, TimeSpan.FromSeconds(30), "no SchemaMismatch");
+        Assert.That(Agent.LinkEnabled, Is.False, "the agent turns its link off on SchemaMismatch");
         Assert.That(Rows.One(_ownerPath, "Product", cable.Id)["Price"], Is.EqualTo(200L));
         Assert.That(_client.Store.Entries(Instance), Has.Count.EqualTo(1));
 

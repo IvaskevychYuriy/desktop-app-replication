@@ -37,7 +37,7 @@ public sealed class AgentNameTests : LabTests
     }
 
     [Test]
-    public async Task Start_without_ResolveInstanceAsync_learns_the_instance_on_the_first_link()
+    public async Task Start_learns_the_instance_on_the_first_link()
     {
         Lab lab = await StartAsync();
         ClientReplication replication = ClientNode.Create(Path.Combine(TestDb.NewDir(), "client.db"), new SyncLog());

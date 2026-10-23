@@ -18,7 +18,10 @@ public enum AgentState
     Snapshot,
     Catchup,
     Online,
-    SchemaMismatch
+    SchemaMismatch,
+
+    /// <summary>Another agent of this client already serves the owner's instance (the same owner, maybe at another address).</summary>
+    Duplicate
 }
 
 public sealed class AgentOptions
@@ -175,7 +178,11 @@ public sealed class SyncAgent : IAsyncDisposable
         }
     }
 
-    /// <summary>Starts the sync loop. Every session asks the owner who it is first, so the owner does not have to be reachable yet.</summary>
+    /// <summary>
+    /// Starts the sync loop. Every session asks the owner who it is first, so the owner does not have to be reachable yet.
+    /// On <see cref="AgentState.SchemaMismatch"/> and <see cref="AgentState.Duplicate"/> the agent turns its link off and
+    /// keeps the state; the app turns <see cref="LinkEnabled"/> on again once the cause is gone.
+    /// </summary>
     public void Start() => _loop ??= Task.Run(() => RunAsync(_life.Token));
 
     /// <summary>Tables open in the UI go first in catch-up (6.4).</summary>
@@ -234,7 +241,7 @@ public sealed class SyncAgent : IAsyncDisposable
             pending, deletes, inflight, _snapshotProgress, _lastError, cursors);
     }
 
-    /// <summary>Applies a schema version change (the demo's "new schema") and reconnects.</summary>
+    /// <summary>Applies a schema version change (the demo's "new schema") and reconnects; after SchemaMismatch turn the link on again.</summary>
     public void SetSchemaVersion(int v)
     {
         Options.SchemaVersion = v;
@@ -251,22 +258,18 @@ public sealed class SyncAgent : IAsyncDisposable
         {
             if (!_link)
             {
-                SetState(AgentState.Offline);
+                // A stop reason stays visible until the app turns the link on again.
+                if (_state is not (AgentState.SchemaMismatch or AgentState.Duplicate))
+                    SetState(AgentState.Offline);
                 await _linkSignal.WaitAsync(TimeSpan.FromSeconds(1), life);
                 continue;
             }
             using CancellationTokenSource cts = CancellationTokenSource.CreateLinkedTokenSource(life);
             _sessionCts = cts;
+            AgentState? stop = null;
             try
             {
-                int schemaAtStart = Options.SchemaVersion;
-                await SessionAsync(cts.Token);
-                backoff = Options.ReconnectMin;
-                if (_state == AgentState.SchemaMismatch)
-                {
-                    while (_link && Options.SchemaVersion == schemaAtStart && !life.IsCancellationRequested)
-                        await _linkSignal.WaitAsync(TimeSpan.FromSeconds(1), life);
-                }
+                stop = await SessionAsync(cts.Token);
             }
             catch (Exception) when (life.IsCancellationRequested)
             {
@@ -280,8 +283,7 @@ public sealed class SyncAgent : IAsyncDisposable
                     continue;
                 }
                 _lastError = e is RpcException re ? $"{re.StatusCode}: {re.Status.Detail}" : e.Message;
-                if (_state != AgentState.SchemaMismatch)
-                    SetState(AgentState.Offline);
+                SetState(AgentState.Offline);
                 Log($"зв'язок обірвався ({_lastError}), повтор через {backoff.TotalSeconds:0.#} с", SyncLogLevel.Warn);
                 await _linkSignal.WaitAsync(backoff, life);
                 backoff = TimeSpan.FromTicks(Math.Min(backoff.Ticks * 2, Options.ReconnectMax.Ticks));
@@ -290,6 +292,13 @@ public sealed class SyncAgent : IAsyncDisposable
             {
                 _sessionCts = null;
                 _write = null;
+            }
+            if (stop is { } s)
+            {
+                // Off before the state is told, so a StatusChanged handler can already turn it on again.
+                _link = false;
+                SetState(s);
+                Log("зв'язок вимкнено: увімкніть його, коли причину усунуто", SyncLogLevel.Warn);
             }
         }
     }
@@ -328,7 +337,8 @@ public sealed class SyncAgent : IAsyncDisposable
         });
     }
 
-    private async Task SessionAsync(CancellationToken ct)
+    /// <summary>One link: throws when it breaks; returns the state the link is turned off in (SchemaMismatch, Duplicate).</summary>
+    private async Task<AgentState> SessionAsync(CancellationToken ct)
     {
         using GrpcChannel channel = CreateChannel();
         var client = new Sync.SyncClient(channel);
@@ -337,7 +347,8 @@ public sealed class SyncAgent : IAsyncDisposable
             ct.ThrowIfCancellationRequested();
             SetState(AgentState.Connecting);
             IdentityReply owner = await client.IdentityAsync(new IdentityRequest(), cancellationToken: ct);
-            await AdoptInstanceAsync(owner.InstanceId, ct);
+            if (!await AdoptInstanceAsync(owner.InstanceId, ct))
+                return AgentState.Duplicate;
 
             using AsyncDuplexStreamingCall<SubscribeMessage, ChangeMessage> call = client.Subscribe(s_gzip, cancellationToken: ct);
             var writeGate = new SemaphoreSlim(1, 1);
@@ -369,9 +380,9 @@ public sealed class SyncAgent : IAsyncDisposable
 
             if (first.BodyCase == ChangeMessage.BodyOneofCase.SchemaMismatch)
             {
-                SetState(AgentState.SchemaMismatch);
-                Log($"← SchemaMismatch: схема власника {first.SchemaMismatch.OwnerSchemaVersion}, моя {Options.SchemaVersion}. Синк зупинено, черга зберігається", SyncLogLevel.Warn);
-                return;
+                _lastError = $"схема власника {first.SchemaMismatch.OwnerSchemaVersion}, моя {Options.SchemaVersion}";
+                Log($"← SchemaMismatch: {_lastError}. Синк зупинено, черга зберігається", SyncLogLevel.Warn);
+                return AgentState.SchemaMismatch;
             }
             if (first.BodyCase == ChangeMessage.BodyOneofCase.SnapshotRequired)
             {
@@ -406,16 +417,28 @@ public sealed class SyncAgent : IAsyncDisposable
     /// <summary>
     /// Takes the replica of instance <paramref name="id"/>, asked from the owner at the start of every session: the address
     /// may change between runs, the instance id does not (4, 6.2). A new one is registered with zero cursors, the data then
-    /// arrives by catch-up or a snapshot.
+    /// arrives by catch-up or a snapshot. False when another agent of this client already serves the instance: this one
+    /// then serves none.
     /// </summary>
-    private async Task AdoptInstanceAsync(string id, CancellationToken ct)
+    private async Task<bool> AdoptInstanceAsync(string id, CancellationToken ct)
     {
         if (id == _instance)
-            return;
+            return true;
         bool known;
         await _gate.WaitAsync(ct);
         try
         {
+            if (_instance is not null)
+                _store.Release(_instance, this);
+            if (_store.Claim(id, this) is var holder && holder != this)
+            {
+                _instance = null;
+                lock (_cursorsLock)
+                    _cursors = NewCursors();
+                _lastError = $"інстанс {id} вже веде агент «{holder.Name}»";
+                Log($"{_lastError}: другий агент на ту саму репліку не підключається", SyncLogLevel.Bad);
+                return false;
+            }
             known = ClientStore.HasInstance(_conn, id);
             if (!known)
             {
@@ -435,6 +458,7 @@ public sealed class SyncAgent : IAsyncDisposable
         }
         Log(known ? $"інстанс власника {id}: репліка є, курсори з бази" : $"інстанс власника {id}: репліки нема, нульові курсори");
         StatusChanged?.Invoke();
+        return true;
     }
 
     /// <summary>The answer to SnapshotRequired: a snapshot, or with <see cref="AgentOptions.SkipSnapshotOnEmptyReplica"/> an emptied replica filled from the stream (6.3, 10.3).</summary>
@@ -1130,6 +1154,8 @@ public sealed class SyncAgent : IAsyncDisposable
         _sessionCts?.Cancel();
         if (_loop is not null)
             await _loop.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing | ConfigureAwaitOptions.ContinueOnCapturedContext);
+        if (_instance is not null)
+            _store.Release(_instance, this);
         _conn.Dispose();
     }
 }

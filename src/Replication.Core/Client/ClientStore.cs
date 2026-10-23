@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.Data.Sqlite;
 using Replication.Model;
 using static Replication.Model.Wire;
@@ -58,6 +59,14 @@ public sealed class ClientStore
     public string ClientId { get; private set; } = "";
 
     /// <param name="foreignKeys">The agent applies batches with FK off: children may arrive before parents (7).</param>
+    /// <summary>The agent that serves each instance: two agents on one replica would race on its rows, cursors and outbox (4).</summary>
+    private readonly ConcurrentDictionary<string, SyncAgent> _holders = new(StringComparer.Ordinal);
+
+    /// <summary>Gives <paramref name="instance"/> to <paramref name="agent"/>; returns the agent that holds it, <paramref name="agent"/> itself on success.</summary>
+    internal SyncAgent Claim(string instance, SyncAgent agent) => _holders.GetOrAdd(instance, agent);
+
+    internal void Release(string instance, SyncAgent agent) => _holders.TryRemove(new KeyValuePair<string, SyncAgent>(instance, agent));
+
     public SqliteConnection Open(bool foreignKeys = true)
     {
         var c = new SqliteConnection(ConnectionString);

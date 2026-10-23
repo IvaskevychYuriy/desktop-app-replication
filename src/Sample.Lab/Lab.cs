@@ -158,7 +158,7 @@ public sealed class Lab : IAsyncDisposable
             if (!c.Link)
                 continue;
             AgentStatus s = c.Agent.GetStatus();
-            if (s.State == AgentState.SchemaMismatch)
+            if (s.State is AgentState.SchemaMismatch or AgentState.Duplicate)
                 continue;
             if (s.State != AgentState.Online || s.Pending > 0 || c.Agent.HasPendingArchiveWork || c.Agent.MinCursor < head)
                 return false;

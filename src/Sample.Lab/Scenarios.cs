@@ -563,10 +563,11 @@ public static class Scenarios
                         l.C1.Link = true;
                         await Lab.WaitAsync(() => l.C1.Agent.GetStatus().State == AgentState.SchemaMismatch, TimeSpan.FromSeconds(15), "нема SchemaMismatch");
                     }),
-                new ScenarioStep("Повернути схему 1", "Обидві сторони знову на одній версії: агент перепідключається, і черга доїжджає.",
+                new ScenarioStep("Повернути схему 1 і увімкнути зв'язок", "На SchemaMismatch агент вимкнув зв'язок. Обидві сторони знову на одній версії: зв'язок увімкнено, і черга доїжджає.",
                     l =>
                     {
                         l.C1.Agent.SetSchemaVersion(1);
+                        l.C1.Link = true;
                         return Task.CompletedTask;
                     }),
             ],
